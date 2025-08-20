@@ -1,0 +1,26 @@
+# Ignorar archivos subidos por usuarios
+/media/
+
+# Ignorar entorno virtual
+/env/
+/venv/
+/.venv/
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Archivos de configuración local
+*.sqlite3
+*.log
+.env
+
+# Configuración de IDEs
+.vscode/
+.idea/
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
