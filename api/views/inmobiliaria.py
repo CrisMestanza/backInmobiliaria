@@ -23,15 +23,16 @@ def list_puntos(request, idlote):
 @api_view(['POST'])
 def register_inmobilaria(request):
     if request.method == 'POST':
-        print("DATA RECIBIDA:", request.data)
+        # print("DATA RECIBIDA:", request.data)
         data = {
             'nombreinmobiliaria': request.data['nombreinmobiliaria'],
             'facebook': request.data['facebook'],
             'whatsapp': request.data['whatsapp'],
             'pagina': request.data['pagina'],
-            'latitud': request.data['latitud'],
-            'longitud': request.data['longitud'],
+            # 'latitud': request.data['latitud'],
+            # 'longitud': request.data['longitud'],
             'estado': 1,
+            'idusuario': 1,
             'descripcion': request.data['descripcion'],
         }
         serializer = InmobilariaSerializer(data=data)

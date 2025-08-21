@@ -3,6 +3,9 @@ from .views.inmobiliaria import *  # o la vista que tengas, revisa el nombre rea
 from .views.tipoInmobiliaria import *  # o la vista que tengas, revisa el nombre real
 from .views.imagen import *  # o la vista que tengas, revisa el nombre real
 from .views.lote import *  # o la vista que tengas, revisa el nombre real
+from .views.proyecto import *  # o la vista que tengas, revisa el nombre real
+from .views.usuario import *  # o la vista que tengas, revisa el nombre real
+from .views.iconos import *  # o la vista que tengas, revisa el nombre real
 
 urlpatterns = [
     #Inmobiliaria 
@@ -21,11 +24,32 @@ urlpatterns = [
     #Lotes
     path('listLotes/', list_lotes),
     path('lote/<int:idtipoinmobiliaria>', lote),
-    path('getLoteInmo/<int:idinmobilaria>', getLote),
+    path('getLoteInmo/<int:idproyecto>', getLote),
     path('registerLote/', registerLote),
     path('rangoPrecio/<str:rango>', rangoPrecio), #Precios que sale en la izquierda
     path('deleteLote/<int:idlote>/', deleteLote),
 
+    #Proyectos
+    path('listProyectos/', listProyectos),
+    path('registerProyecto/', registerProyecto),
+    path('listProyectoId/<int:idproyecto>', listProyectoId),
+    path('updateProyecto/<int:idproyecto>/', updateProyecto),
+    path('deleteProyecto/<int:idproyecto>/', deleteProyecto),
     
-]
+    #Usiaros
+    path('listUsuarios/', listUsuarios),
+    path('registerUsuario/', registerUsuario),  
+    path('listUsuarioId/<int:idusuario>', listUsuarioId),
+    path('updateUsuario/<int:idusuario>/', updateUsuario),
+    path('deleteUsuario/<int:idusuario>/', deleteUsuario),
+    path('loginUsuario/', loginUsuario), #Login
+    
+    #Iconos
+    path('listIconos/', listIconos),
+    path('registerIconos/', registerIcono),
+    path('listIconosId/<int:idiconos>', listIconoId),
+    path('updateIconos/<int:idiconos>/', updateIcono),
+    path('deleteIconos/<int:idiconos>/', deleteIcono),
+    
+    ]
 

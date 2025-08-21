@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Imagenes, Inmobilaria, Puntos,TipoInmobiliaria, Lote
+from .models import Imagenes, Inmobilaria, Puntos,TipoInmobiliaria, Lote, Iconos, Usuario, Proyecto
 
 class ImagenesSerializer(serializers.ModelSerializer):
     class Meta:
@@ -28,3 +28,18 @@ class LoteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Lote
         fields = '__all__'
+
+class IconosSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Iconos
+        fields = '__all__'  # O lista de campos ['id', 'nombre', 'precio']
+
+class UsuarioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Usuario
+        fields = '__all__'  # O lista de campos ['id', 'nombre', 'precio']
+
+class ProyectoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Proyecto
+        fields = '__all__'  # O lista de campos ['id', 'nombre', 'precio']

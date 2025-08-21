@@ -22,35 +22,41 @@ def lote(request, idtipoinmobiliaria):
 
 
 @api_view(['GET'])
-def getLote(request, idinmobilaria):
-    lote = Lote.objects.filter(idinmobilaria = idinmobilaria)
+def getLote(request, idproyecto):
+    lote = Lote.objects.filter(idproyecto = idproyecto)
     serializer = LoteSerializer(lote, many=True)
     return Response(serializer.data)
  
 
 @api_view(['POST'])
 def registerLote(request):
-    
     if request.method == 'POST':
-        # print(request.data['precio'])
         data = {
-            'idtipoinmobiliaria': request.data['idtipoinmobiliaria'],
-            'idinmobilaria': request.data['idinmobilaria'],
-            'nombre': request.data['nombreinmobiliaria'],
-            'latitud': request.data['latitud'],
-            'longitud': request.data['longitud'],
+            'idtipoinmobiliaria': request.data.get('idtipoinmobiliaria'),
+            'idproyecto': request.data.get('idproyecto'),
+            'nombre': request.data.get('nombre'),
+            'latitud': request.data.get('latitud'),
+            'longitud': request.data.get('longitud'),
             'estado': 1,
-            'descripcion': request.data['descripcion'],
-            'precio': request.data['precio'],
+            'descripcion': request.data.get('descripcion'),
+            'precio': request.data.get('precio'),
+            'vendido': request.data.get('vendido'),
         }
+
         serializer = LoteSerializer(data=data)
         if serializer.is_valid():
             lote = serializer.save()
             last_id = lote.idlote
 
-            # ✅ Deserializa los puntos JSON
-            puntos_raw = request.data.get("puntos", "[]")
-            puntos_data = json.loads(puntos_raw)
+            # ✅ Manejo flexible de puntos
+            puntos_raw = request.data.get("puntos", [])
+            if isinstance(puntos_raw, str):   # viene como string JSON (form-data)
+                try:
+                    puntos_data = json.loads(puntos_raw)
+                except json.JSONDecodeError:
+                    puntos_data = []
+            else:  # ya viene como lista (JSON body)
+                puntos_data = puntos_raw
 
             nuevos_puntos = []
             for punto in puntos_data:
@@ -61,8 +67,10 @@ def registerLote(request):
                     punto_serializer.save()
                     nuevos_puntos.append(punto_serializer.data)
 
-            # Guardar imágenes
+            # ✅ Guardar imágenes
             nuevas_imagenes = []
+
+            # Caso archivos subidos por form-data
             imagenes_files = request.FILES.getlist('imagenes')
             for archivo in imagenes_files:
                 img = {
@@ -73,16 +81,24 @@ def registerLote(request):
                 if imagen_serializer.is_valid():
                     imagen_serializer.save()
                     nuevas_imagenes.append(imagen_serializer.data)
-                else:
-                    return Response(imagen_serializer.errors, status=400)
+
+            # Caso rutas en JSON (imagenes_creadas)
+            imagenes_json = request.data.get("imagenes_creadas", [])
+            for img in imagenes_json:
+                img["idlote"] = last_id
+                imagen_serializer = ImagenesSerializer(data=img)
+                if imagen_serializer.is_valid():
+                    imagen_serializer.save()
+                    nuevas_imagenes.append(imagen_serializer.data)
 
             return Response({
-                "inmobiliaria": serializer.data,
+                "lote": serializer.data,
                 "imagenes_creadas": nuevas_imagenes,
                 "puntos_creados": nuevos_puntos
             }, status=201)
 
         return Response(serializer.errors, status=400)
+
 
 @api_view(["GET"])
 def rangoPrecio(request, rango):
