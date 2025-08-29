@@ -1,7 +1,7 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from ..serializers import InmobilariaSerializer, ImagenesSerializer, PuntosSerializer, LoteSerializer
-from ..models import Inmobilaria, Imagenes, Puntos, Lote
+from ..serializers import InmobilariaSerializer, ImagenesSerializer, PuntosSerializer, LoteSerializer, PuntosProyectoSerializer
+from ..models import Inmobilaria, Imagenes, Puntos, Lote, PuntosProyecto
 from rest_framework import status
 import json 
 
@@ -18,7 +18,24 @@ def list_puntos(request, idlote):
         puntos = Puntos.objects.filter(idlote=idlote) 
         serializer = PuntosSerializer(puntos, many=True)
         return Response(serializer.data)
- 
+
+@api_view(['GET'])
+def list_puntosproyecto(request, idproyecto):
+    if request.method == 'GET':
+        puntos = PuntosProyecto.objects.filter(idproyecto=idproyecto) 
+        serializer = PuntosProyectoSerializer(puntos, many=True)
+        return Response(serializer.data)
+
+@api_view(['POST'])
+def validar_lote(request, idproyecto):
+    puntos_proyecto = list(PuntosProyecto.objects.filter(idproyecto=idproyecto).values_list("latitud", "longitud"))
+    puntos_lote = request.data.get("puntos", [])
+    # usar shapely para validar
+    from shapely.geometry import Polygon, Point
+    poly_proyecto = Polygon(puntos_proyecto)
+    poly_lote = Polygon([(float(p["latitud"]), float(p["longitud"])) for p in puntos_lote])
+    valido = poly_proyecto.contains(poly_lote)
+    return Response({"valido": valido})
 
 @api_view(['POST'])
 def register_inmobilaria(request):

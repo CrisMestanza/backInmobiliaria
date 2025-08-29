@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Imagenes, Inmobilaria, Puntos,TipoInmobiliaria, Lote, Iconos, Usuario, Proyecto
+from .models import Imagenes, Inmobilaria, Puntos, PuntosProyecto,TipoInmobiliaria, Lote, Iconos, Usuario, Proyecto
 
 class ImagenesSerializer(serializers.ModelSerializer):
     class Meta:
@@ -13,6 +13,10 @@ class PuntosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Puntos
         fields = '__all__'  # O lista de campos ['id', 'nombre', 'precio']
+class PuntosProyectoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PuntosProyecto
+        fields = '__all__'  
 class ImagenesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Imagenes

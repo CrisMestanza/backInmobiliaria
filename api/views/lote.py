@@ -13,10 +13,10 @@ def list_lotes(request):
         return Response(serializer.data)
 
 @api_view(['GET'])
-def lote(request, idtipoinmobiliaria):
+def lote(request, idproyecto):
     if request.method == 'GET':
-        print("Lote ID:", idtipoinmobiliaria)
-        lotes = Lote.objects.filter(idtipoinmobiliaria= idtipoinmobiliaria)
+        print("Lote ID:", idproyecto)
+        lotes = Lote.objects.filter(idproyecto= idproyecto)
         serializer = LoteSerializer(lotes, many=True)
         return Response(serializer.data)
 

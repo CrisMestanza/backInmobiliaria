@@ -81,6 +81,20 @@ class Puntos(models.Model):
         managed = False
         db_table = 'puntos'
 
+class PuntosProyecto(models.Model):
+    idpunto = models.AutoField(primary_key=True)
+    latitud = models.FloatField()
+    longitud = models.FloatField()
+    orden = models.IntegerField()
+    idproyecto = models.ForeignKey(
+        Proyecto, on_delete=models.CASCADE,
+        db_column='idproyecto', related_name='puntos'
+    )
+
+    class Meta:
+        db_table = 'puntosproyecto'
+        managed = False
+
 
 class TipoInmobiliaria(models.Model):
     idtipoinmobiliaria = models.AutoField(primary_key=True)

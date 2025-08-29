@@ -12,6 +12,7 @@ urlpatterns = [
     path('listInmobiliaria/', list_inmobiliarias),
     path('registerInmobiliaria/', register_inmobilaria),
     path('listPuntos/<int:idlote>', list_puntos),
+    path('listPuntosProyecto/<int:idproyecto>', list_puntosproyecto),
     path('list_lote_id/<int:idlote>', list_inmobiliarias_id),
     path('getImobiliaria/<int:idinmobilaria>', getImobiliaria),
     path('updateInmobiliaria/<int:idinmobilaria>/', updateInmobiliaria),
@@ -23,15 +24,16 @@ urlpatterns = [
     
     #Lotes
     path('listLotes/', list_lotes),
-    path('lote/<int:idtipoinmobiliaria>', lote),
-    path('getLoteInmo/<int:idproyecto>', getLote),
+    path('lote/<int:idproyecto>', lote),
+    path('getLoteProyecto/<int:idproyecto>', getLote),
     path('registerLote/', registerLote),
-    path('rangoPrecio/<str:rango>', rangoPrecio), #Precios que sale en la izquierda
+    path('rangoPrecio/<str:rango>', rangoPrecio),
     path('deleteLote/<int:idlote>/', deleteLote),
 
     #Proyectos
     path('listProyectos/', listProyectos),
     path('registerProyecto/', registerProyecto),
+    path('getProyectoInmo/<int:idinmobilaria>', getProyecto),
     path('listProyectoId/<int:idproyecto>', listProyectoId),
     path('updateProyecto/<int:idproyecto>/', updateProyecto),
     path('deleteProyecto/<int:idproyecto>/', deleteProyecto),
