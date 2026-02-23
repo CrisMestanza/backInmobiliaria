@@ -17,14 +17,14 @@ ALLOWED_HOSTS = [
     'api.geohabita.com',
     'www.api.geohabita.com',
     'geohabita.com',   # agrega también tu front
-    'www.geohabita.com'
+    'www.geohabita.com' #pa fecha
 ]
 
 # ============================================
 # APLICACIONES
 # ============================================
 INSTALLED_APPS = [
-    'django.contrib.admin', 
+    'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -100,7 +100,7 @@ REST_FRAMEWORK = {
 SIMPLE_JWT = {
     "USER_ID_FIELD": "idusuario",
     "USER_ID_CLAIM": "user_id",
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=5),
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=5), #5 horas de duración del token
 }
 
 # ============================================
