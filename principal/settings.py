@@ -17,7 +17,7 @@ ALLOWED_HOSTS = [
     'api.geohabita.com',
     'www.api.geohabita.com',
     'geohabita.com',   # agrega también tu front
-    'www.geohabita.com' #pa fecha
+    'www.geohabita.com' #Pa ver deploy en cpanel
 ]
 
 # ============================================
