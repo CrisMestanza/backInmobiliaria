@@ -1,11 +1,6 @@
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/geohzdwu/api.geohabita.com/app
-    - /bin/cp -R api $DEPLOYPATH
-    - /bin/cp -R principal $DEPLOYPATH
-    - /bin/cp manage.py $DEPLOYPATH
-    - /bin/cp requirements.txt $DEPLOYPATH
-    - source /home/geohzdwu/virtualenv/api.geohabita.com/app/3.10/bin/activate && pip install -r $DEPLOYPATH/requirements.txt
-    - source /home/geohzdwu/virtualenv/api.geohabita.com/app/3.10/bin/activate && python $DEPLOYPATH/manage.py migrate --noinput
-    - source /home/geohzdwu/virtualenv/api.geohabita.com/app/3.10/bin/activate && python $DEPLOYPATH/manage.py collectstatic --noinput
-    - touch $DEPLOYPATH/tmp/restart.txt
+    - source /home/geohzdwu/virtualenv/api.geohabita.com/app/3.10/bin/activate && pip install -r requirements.txt
+    - source /home/geohzdwu/virtualenv/api.geohabita.com/app/3.10/bin/activate && python manage.py migrate --noinput
+    - source /home/geohzdwu/virtualenv/api.geohabita.com/app/3.10/bin/activate && python manage.py collectstatic --noinput
+    - touch tmp/restart.txt
