@@ -116,10 +116,19 @@ def deleteUsuario(request, idusuario):
 @permission_classes([AllowAny])
 @throttle_classes([RegisterRateThrottle])
 def register_inmobiliaria_usuario(request):
+    usuario_payload = request.data.get("usuario")
+    if usuario_payload is None:
+        usuario_payload = {}
+    if not isinstance(usuario_payload, dict):
+        return Response(
+            {"usuario": ["Debe ser un objeto con correo, nombre y password."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     usuario_data = {
-        "correo": request.data.get("correo"),
-        "password": request.data.get("password"),
-        "nombre": request.data.get("nombre"),
+        "correo": usuario_payload.get("correo") or request.data.get("correo"),
+        "password": usuario_payload.get("password") or request.data.get("password"),
+        "nombre": usuario_payload.get("nombre") or request.data.get("nombre"),
         "estado": 1,
     }
     usuario_serializer = UsuarioSerializer(data=usuario_data)
