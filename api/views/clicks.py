@@ -1,15 +1,19 @@
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.decorators import api_view, permission_classes, authentication_classes, throttle_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from ..serializers import *
 from ..models import *
 from rest_framework import status
 from django.db.models import Sum
+from ..authentication import CustomJWTAuthentication
+from ..throttling import ClickRateThrottle
+from .permissions import user_inmobiliaria_id
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 # Listar iconos activos
 @api_view(['POST'])
 @permission_classes([AllowAny]) 
+@throttle_classes([ClickRateThrottle])
 def registerClickProyecto(request):
     data = {
         'idproyecto': request.data.get('idproyecto'),
@@ -25,6 +29,7 @@ def registerClickProyecto(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny]) 
+@throttle_classes([ClickRateThrottle])
 def registerClickContactos(request):
     data = {
         'idproyecto': request.data.get('idproyecto'),
@@ -41,9 +46,14 @@ def registerClickContactos(request):
 
 # Mostrar datos 
 @api_view(['GET'])
-@permission_classes([AllowAny])  # o IsAuthenticated si usas login JWT
+@authentication_classes([CustomJWTAuthentication])
+@permission_classes([IsAuthenticated])
 def dashboard_clicks_inmobiliaria(request, idinmobiliaria):
     try:
+        owner_inmo_id = user_inmobiliaria_id(request.user)
+        if not owner_inmo_id or int(idinmobiliaria) != int(owner_inmo_id):
+            return Response({"error": "No tienes permisos para ver este dashboard."}, status=403)
+
         # 🔹 Obtener los proyectos de la inmobiliaria
         proyectos = Proyecto.objects.filter(idinmobiliaria=idinmobiliaria)
         if not proyectos.exists():

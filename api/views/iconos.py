@@ -7,6 +7,8 @@ from rest_framework.permissions import AllowAny
 from rest_framework.decorators import authentication_classes
 from ..authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated
+from ..security_uploads import build_secure_image_name, validate_uploaded_image
+from .permissions import user_inmobiliaria_id
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 # Listar iconos activos
@@ -23,11 +25,21 @@ def listIconos(request):
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def registerIcono(request):
+    imagen = request.FILES.get('imagen')
+    if imagen is None:
+        return Response({"error": "La imagen es requerida"}, status=status.HTTP_400_BAD_REQUEST)
+
+    validate_uploaded_image(imagen)
+    imagen.name = build_secure_image_name(
+        inmobiliaria_id=user_inmobiliaria_id(request.user),
+        proyecto_id=request.data.get('idproyecto', 'global'),
+        image_type="icono",
+        original_name=imagen.name,
+    )
+
     data = {
-        'nombreicono': request.data.get('nombreicono'),
-        'longitud': request.data.get('longitud'),
-        'latitud': request.data.get('latitud'),
-        'idproyecto': request.data.get('idproyecto'),
+        'nombre': request.data.get('nombre'),
+        'imagen': imagen,
         'estado': 1
     }
     serializer = IconosSerializer(data=data)
@@ -59,7 +71,19 @@ def updateIcono(request, idiconos):
     except Iconos.DoesNotExist:
         return Response({'error': 'Icono no encontrado'}, status=status.HTTP_404_NOT_FOUND)
 
-    serializer = IconosSerializer(icono, data=request.data)
+    payload = request.data.copy()
+    imagen = request.FILES.get('imagen')
+    if imagen:
+        validate_uploaded_image(imagen)
+        imagen.name = build_secure_image_name(
+            inmobiliaria_id=user_inmobiliaria_id(request.user),
+            proyecto_id=request.data.get('idproyecto', 'global'),
+            image_type="icono-update",
+            original_name=imagen.name,
+        )
+        payload['imagen'] = imagen
+
+    serializer = IconosSerializer(icono, data=payload, partial=True)
     if serializer.is_valid():
         serializer.save()
         return Response(serializer.data, status=200)

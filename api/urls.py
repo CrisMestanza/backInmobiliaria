@@ -17,7 +17,7 @@ urlpatterns = [
     #Inmobiliaria 
     path('listInmobiliaria/', list_inmobiliarias),
     # path('registerInmobiliaria/', register_inmobiliaria),
-    path('register_inmobiliaria_usuario/', registrar_inmobiliaria),
+    path('register_inmobiliaria/', registrar_inmobiliaria),
     path('listPuntos/<int:idlote>', list_puntos),
     path('listPuntosLoteProyecto/<int:idproyecto>/', list_puntos_por_proyecto),
     path('listPuntosProyecto/<int:idproyecto>', list_puntosproyecto),

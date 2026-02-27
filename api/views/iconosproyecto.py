@@ -1,16 +1,34 @@
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from ..serializers import  IconoProyectoSerializer
 from ..models import IconoProyecto
 from rest_framework import status
+from ..authentication import CustomJWTAuthentication
+from .permissions import is_project_owned_by_user
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def list_iconos_disponibles(request):
     try:
-        iconos = IconoProyecto.objects.all()
+        iconos = (
+            IconoProyecto.objects
+            .filter(estado=1)
+            .select_related("idicono")
+            .only(
+                "idiconoproyecto",
+                "idproyecto_id",
+                "idicono_id",
+                "latitud",
+                "longitud",
+                "estado",
+                "idicono__idiconos",
+                "idicono__nombre",
+                "idicono__imagen",
+                "idicono__estado",
+            )
+        )
         serializer = IconoProyectoSerializer(iconos, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
     except Exception as e:
@@ -20,7 +38,23 @@ def list_iconos_disponibles(request):
 @permission_classes([AllowAny])
 def list_iconos_proyecto(request, idproyecto):
     try:
-        iconos = IconoProyecto.objects.filter(idproyecto=idproyecto, estado=1)  # solo activos
+        iconos = (
+            IconoProyecto.objects
+            .filter(idproyecto=idproyecto, estado=1)
+            .select_related("idicono")
+            .only(
+                "idiconoproyecto",
+                "idproyecto_id",
+                "idicono_id",
+                "latitud",
+                "longitud",
+                "estado",
+                "idicono__idiconos",
+                "idicono__nombre",
+                "idicono__imagen",
+                "idicono__estado",
+            )
+        )
         serializer = IconoProyectoSerializer(iconos, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
     except Exception as e:
@@ -28,10 +62,20 @@ def list_iconos_proyecto(request, idproyecto):
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@authentication_classes([CustomJWTAuthentication])
+@permission_classes([IsAuthenticated])
 def add_iconos_proyecto(request):
     data = request.data
     is_many = isinstance(data, list)
+    payload = data if is_many else [data]
+
+    for item in payload:
+        project_id = item.get("idproyecto")
+        if not project_id or not is_project_owned_by_user(project_id, request.user):
+            return Response(
+                {"error": "No tienes permisos para agregar iconos a este proyecto."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
     serializer = IconoProyectoSerializer(data=data, many=is_many)
 

@@ -15,15 +15,16 @@ class CustomJWTAuthentication(JWTAuthentication):
         """
         auth_header = self.get_header(request)
         if auth_header is None:
-            return None  # 🔹 sin token → no autenticar (permite vistas públicas)
+            return None
 
         try:
             raw_token = self.get_raw_token(auth_header)
+            if raw_token is None:
+                raise AuthenticationFailed("Formato de token inválido")
             validated_token = self.get_validated_token(raw_token)
             return self.get_user(validated_token), validated_token
         except (InvalidToken, AuthenticationFailed):
-            # 🔹 Si el token no es válido, simplemente ignora en vez de lanzar error global
-            return None
+            raise AuthenticationFailed("Token inválido o expirado")
 
     def get_user(self, validated_token):
         try:

@@ -1,121 +1,225 @@
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
-from rest_framework.response import Response
-from ..serializers import InmobiliariaSerializer, ImagenesSerializer, PuntosSerializer, LoteSerializer, IconosSerializer, UsuarioSerializer, ProyectoSerializer, PuntosProyectoSerializer
-from ..models import Inmobiliaria, Imagenes, Puntos, Lote, Iconos, Usuario, Proyecto, PuntosProyecto, ImagenesProyecto
-from django.db import transaction
-from rest_framework import status
 import json
-from rest_framework.decorators import authentication_classes
-from ..authentication import CustomJWTAuthentication
-from .permissions import IsOwnerOfProyecto, IsSameInmobiliaria
-from rest_framework.permissions import IsAuthenticated
 import sys
-sys.stdout.reconfigure(encoding='utf-8')
+
+from django.db import transaction
+from django.db.models import Prefetch
+from rest_framework import status
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+
+from ..authentication import CustomJWTAuthentication
+from ..models import (
+    ClickProyectos,
+    ClicksContactos,
+    IconoProyecto,
+    Imagenes,
+    ImagenesProyecto,
+    Inmobiliaria,
+    Lote,
+    Proyecto,
+    Puntos,
+    PuntosProyecto,
+)
+from ..serializers import ProyectoDetalleMapaSerializer, ProyectoMapaSerializer, ProyectoSerializer
+from .permissions import IsOwnerOfProyecto, user_inmobiliaria_id
+from ..security_uploads import build_secure_image_name, validate_uploaded_image
+
+sys.stdout.reconfigure(encoding="utf-8")
+
+PROYECTO_MAP_ONLY_FIELDS = (
+    "idproyecto",
+    "nombreproyecto",
+    "latitud",
+    "longitud",
+    "idinmobiliaria_id",
+    "idtipoinmobiliaria_id",
+    "estado",
+    "descripcion",
+    "precio",
+    "area_total_m2",
+    "dormitorios",
+    "banos",
+    "cuartos",
+    "titulo_propiedad",
+    "cochera",
+    "cocina",
+    "sala",
+    "patio",
+    "jardin",
+    "terraza",
+    "azotea",
+    "ancho",
+    "largo",
+)
+
+
+def _parse_json_list(value):
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    return value if isinstance(value, list) else []
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def listProyectos(request):
-    if request.method == 'GET':
-        proyectos = Proyecto.objects.filter(estado=1)
-        serializer = ProyectoSerializer(proyectos, many=True)
-        return Response(serializer.data)
+    proyectos = (
+        Proyecto.objects.filter(estado=1)
+        .only(*PROYECTO_MAP_ONLY_FIELDS)
+        .prefetch_related(
+            Prefetch(
+                "iconos_proyecto",
+                queryset=IconoProyecto.objects.filter(estado=1)
+                .select_related("idicono")
+                .only(
+                    "idproyecto_id",
+                    "latitud",
+                    "longitud",
+                    "idicono__nombre",
+                    "idicono__imagen",
+                ),
+            )
+        )
+    )
+    serializer = ProyectoMapaSerializer(proyectos, many=True)
+    return Response(serializer.data)
  
 @api_view(['POST'])
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def registerProyecto(request):
-    if request.method == 'POST':
-        data = {
-            'nombreproyecto': request.data.get('nombreproyecto'),
-            'longitud': request.data.get('longitud'),
-            'latitud': request.data.get('latitud'),
-            'idinmobiliaria': request.data.get('idinmobiliaria'),
-            'descripcion': request.data.get('descripcion'),
-            'idtipoinmobiliaria': request.data.get('idtipoinmobiliaria'),
-            'estado': 1,
-        
-            # CAMPOS QUE FALTABAN
-            'dormitorios': request.data.get('dormitorios', 0),
-            'banos': request.data.get('banos', 0),
-            'cuartos': request.data.get('cuartos', 0),
-            'titulo_propiedad': request.data.get('titulo_propiedad', 0),
-            'cochera': request.data.get('cochera', 0),
-            'cocina': request.data.get('cocina', 0),
-            'sala': request.data.get('sala', 0),
-            'patio': request.data.get('patio', 0),
-            'jardin': request.data.get('jardin', 0),
-            'terraza': request.data.get('terraza', 0),
-            'azotea': request.data.get('azotea', 0),
-            'precio': request.data.get('precio', 0),
-            'area_total_m2': request.data.get('area_total_m2', 0),
-            'ancho': request.data.get('ancho', 0),
-            'largo': request.data.get('largo', 0),
-        }
+    inmobiliaria_usuario = Inmobiliaria.objects.filter(idusuario=request.user).only("idinmobiliaria").first()
+    if not inmobiliaria_usuario:
+        return Response({"error": "Usuario sin inmobiliaria asociada"}, status=status.HTTP_403_FORBIDDEN)
 
-        serializer = ProyectoSerializer(data=data)
-        if serializer.is_valid():
-            proyecto = serializer.save()
-            last_id = proyecto.idproyecto
-            print("Datos recibidos:", request.data)
+    data = {
+        "nombreproyecto": request.data.get("nombreproyecto"),
+        "longitud": request.data.get("longitud"),
+        "latitud": request.data.get("latitud"),
+        "idinmobiliaria": inmobiliaria_usuario.idinmobiliaria,
+        "descripcion": request.data.get("descripcion"),
+        "idtipoinmobiliaria": request.data.get("idtipoinmobiliaria"),
+        "estado": 1,
+        "dormitorios": request.data.get("dormitorios", 0),
+        "banos": request.data.get("banos", 0),
+        "cuartos": request.data.get("cuartos", 0),
+        "titulo_propiedad": request.data.get("titulo_propiedad", 0),
+        "cochera": request.data.get("cochera", 0),
+        "cocina": request.data.get("cocina", 0),
+        "sala": request.data.get("sala", 0),
+        "patio": request.data.get("patio", 0),
+        "jardin": request.data.get("jardin", 0),
+        "terraza": request.data.get("terraza", 0),
+        "azotea": request.data.get("azotea", 0),
+        "precio": request.data.get("precio", 0),
+        "area_total_m2": request.data.get("area_total_m2", 0),
+        "ancho": request.data.get("ancho", 0),
+        "largo": request.data.get("largo", 0),
+    }
 
-            puntos_raw = request.data.get("puntos", [])
-            if isinstance(puntos_raw, str):
-                try:
-                    puntos_data = json.loads(puntos_raw)
-                except json.JSONDecodeError:
-                    puntos_data = []
-            else:
-                puntos_data = puntos_raw
+    serializer = ProyectoSerializer(data=data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-            nuevos_puntos = []
-            for idx, punto in enumerate(puntos_data):
-                punto["idproyecto"] = last_id
-                punto["orden"] = idx + 1
-                from ..serializers import PuntosProyectoSerializer
-                punto_serializer = PuntosProyectoSerializer(data=punto)
-                if punto_serializer.is_valid():
-                    punto_serializer.save()
-                    nuevos_puntos.append(punto_serializer.data)
+    puntos_data = _parse_json_list(request.data.get("puntos", []))
 
-            imagenes = request.FILES.getlist("imagenes")
-            nuevas_imagenes = []
-            from ..models import ImagenesProyecto
-            for img in imagenes:
-                imagen_obj = ImagenesProyecto.objects.create(
+    with transaction.atomic():
+        proyecto = serializer.save()
+
+        puntos_bulk = []
+        for idx, punto in enumerate(puntos_data):
+            lat = punto.get("latitud", punto.get("lat"))
+            lng = punto.get("longitud", punto.get("lng"))
+            if lat is None or lng is None:
+                continue
+            puntos_bulk.append(
+                PuntosProyecto(
                     idproyecto=proyecto,
-                    imagenproyecto=img
+                    latitud=lat,
+                    longitud=lng,
+                    orden=idx + 1,
                 )
-                nuevas_imagenes.append({
+            )
+        if puntos_bulk:
+            PuntosProyecto.objects.bulk_create(puntos_bulk, batch_size=500)
+
+        nuevas_imagenes = []
+        for img in request.FILES.getlist("imagenes"):
+            validate_uploaded_image(img)
+            img.name = build_secure_image_name(
+                inmobiliaria_id=inmobiliaria_usuario.idinmobiliaria,
+                proyecto_id=proyecto.idproyecto,
+                image_type="proyecto",
+                original_name=img.name,
+            )
+            imagen_obj = ImagenesProyecto.objects.create(idproyecto=proyecto, imagenproyecto=img)
+            nuevas_imagenes.append(
+                {
                     "idimagenesp": imagen_obj.idimagenesp,
                     "imagenproyecto": imagen_obj.imagenproyecto.url,
-                    "idproyecto": last_id
-                })
+                    "idproyecto": proyecto.idproyecto,
+                }
+            )
 
-            return Response({
-                "proyecto": serializer.data,
-                "puntos_creados": nuevos_puntos,
-                "imagenes_creadas": nuevas_imagenes
-            }, status=201)
-
-        else:
-            return Response(serializer.errors, status=400)
+    return Response(
+        {
+            "proyecto": serializer.data,
+            "puntos_creados": len(puntos_bulk),
+            "imagenes_creadas": nuevas_imagenes,
+        },
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def listProyectoId(request, idproyecto):
-    if request.method == 'GET':
-        proyecto = Proyecto.objects.filter(idproyecto=idproyecto, estado=1)
-        serializer = ProyectoSerializer(proyecto, many=True)
-        return Response(serializer.data)
+    proyecto = (
+        Proyecto.objects.filter(idproyecto=idproyecto, estado=1)
+        .only("idproyecto", "nombreproyecto")
+        .prefetch_related(
+            Prefetch(
+                "puntos",
+                queryset=PuntosProyecto.objects.only("idproyecto_id", "latitud", "longitud", "orden").order_by("orden"),
+            ),
+            Prefetch(
+                "lote_set",
+                queryset=Lote.objects.only(
+                    "idlote",
+                    "nombre",
+                    "precio",
+                    "vendido",
+                    "latitud",
+                    "longitud",
+                    "idproyecto_id",
+                ).prefetch_related(
+                    Prefetch(
+                        "puntos_set",
+                        queryset=Puntos.objects.only("idlote_id", "latitud", "longitud", "orden").order_by("orden"),
+                    )
+                ),
+            ),
+        )
+        .first()
+    )
+    if not proyecto:
+        return Response({"error": "Proyecto no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
+    serializer = ProyectoDetalleMapaSerializer(proyecto)
+    return Response(serializer.data)
     
     
 @api_view(['GET'])
 @authentication_classes([CustomJWTAuthentication])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def getProyecto(request, idinmobiliaria):
-    proyecto = Proyecto.objects.filter(idinmobiliaria= idinmobiliaria)
+    owner_inmo_id = user_inmobiliaria_id(request.user)
+    if not owner_inmo_id or int(idinmobiliaria) != int(owner_inmo_id):
+        return Response({"error": "No tienes permisos para ver estos proyectos."}, status=status.HTTP_403_FORBIDDEN)
+
+    proyecto = Proyecto.objects.filter(idinmobiliaria=idinmobiliaria)
     serializer = ProyectoSerializer(proyecto, many=True)
     return Response(serializer.data)
  
@@ -139,8 +243,6 @@ def updateProyecto(request, idproyecto):
         serializer.save()
         return Response(serializer.data, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-from ..models import ClickProyectos, ClicksContactos
 
 @api_view(['DELETE'])
 @authentication_classes([CustomJWTAuthentication])
@@ -185,18 +287,33 @@ def deleteProyecto(request, idproyecto):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def tipoProyecto(request, idtipoinmobiliaria):
-    if request.method == 'GET':
-        tipo = Proyecto.objects.filter(estado=1,idtipoinmobiliaria= idtipoinmobiliaria )
-        serializer = ProyectoSerializer(tipo, many=True)
-        return Response(serializer.data)
+    tipo = (
+        Proyecto.objects.filter(estado=1, idtipoinmobiliaria=idtipoinmobiliaria)
+        .only(*PROYECTO_MAP_ONLY_FIELDS)
+        .prefetch_related(
+            Prefetch(
+                "iconos_proyecto",
+                queryset=IconoProyecto.objects.filter(estado=1)
+                .select_related("idicono")
+                .only(
+                    "idproyecto_id",
+                    "latitud",
+                    "longitud",
+                    "idicono__nombre",
+                    "idicono__imagen",
+                ),
+            )
+        )
+    )
+    serializer = ProyectoMapaSerializer(tipo, many=True)
+    return Response(serializer.data)
     
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def listProyectosInmobiliaria(request, idinmobiliaria):
-    if request.method == 'GET':
-        proyectos = Proyecto.objects.filter(idinmobiliaria=idinmobiliaria, estado=1)
-        serializer = ProyectoSerializer(proyectos, many=True)
-        return Response(serializer.data)
+    proyectos = Proyecto.objects.filter(idinmobiliaria=idinmobiliaria, estado=1)
+    serializer = ProyectoSerializer(proyectos, many=True)
+    return Response(serializer.data)
         
         
 @api_view(['GET'])
@@ -206,7 +323,24 @@ def proyectos_filtrados(request):
     rango = request.GET.get('rango')      # 15001-35000
     inmo  = request.GET.get('inmo')       # opcional
 
-    proyectos = Proyecto.objects.filter(estado=1)
+    proyectos = (
+        Proyecto.objects.filter(estado=1)
+        .only(*PROYECTO_MAP_ONLY_FIELDS)
+        .prefetch_related(
+            Prefetch(
+                "iconos_proyecto",
+                queryset=IconoProyecto.objects.filter(estado=1)
+                .select_related("idicono")
+                .only(
+                    "idproyecto_id",
+                    "latitud",
+                    "longitud",
+                    "idicono__nombre",
+                    "idicono__imagen",
+                ),
+            )
+        )
+    )
 
     if tipo:
         proyectos = proyectos.filter(idtipoinmobiliaria=tipo)
@@ -217,12 +351,9 @@ def proyectos_filtrados(request):
     if rango:
         try:
             min_p, max_p = map(float, rango.split("-"))
-            proyectos = proyectos.filter(
-                lote__precio__gte=min_p,
-                lote__precio__lte=max_p
-            ).distinct()
-        except:
+            proyectos = proyectos.filter(lote__precio__range=(min_p, max_p)).distinct()
+        except ValueError:
             pass
 
-    serializer = ProyectoSerializer(proyectos, many=True)
+    serializer = ProyectoMapaSerializer(proyectos, many=True)
     return Response(serializer.data)

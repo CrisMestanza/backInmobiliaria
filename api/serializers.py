@@ -1,9 +1,25 @@
-from rest_framework import serializers
-from django.contrib.auth.hashers import make_password,check_password
-from .models import Imagenes, Inmobiliaria, Puntos, PuntosProyecto,TipoInmobiliaria, Lote, Iconos, Usuario, Proyecto, ImagenesProyecto, IconoProyecto, ClickProyectos, ClicksContactos
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth import authenticate
+from django.db import transaction
+from django.contrib.auth.password_validation import validate_password
+from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
+
+from .models import (
+    ClickProyectos,
+    ClicksContactos,
+    IconoProyecto,
+    Iconos,
+    Imagenes,
+    ImagenesProyecto,
+    Inmobiliaria,
+    Lote,
+    Proyecto,
+    Puntos,
+    PuntosProyecto,
+    TipoInmobiliaria,
+    Usuario,
+)
 
 class InmobiliariaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -32,13 +48,12 @@ class TipoInmobiliariasSerializer(serializers.ModelSerializer):
         fields = '__all__'
         
 class ProyectoSerializer(serializers.ModelSerializer):
-    
     class Meta:
         model = Proyecto
-        fields = '__all__'  # O lista de campos ['id', 'nombre', 'precio']
+        fields = '__all__'
         
 class LoteSerializer(serializers.ModelSerializer):
-    inmobiliaria = InmobiliariaSerializer(source='idinmobiliaria', read_only=True)
+    inmobiliaria = InmobiliariaSerializer(source='idproyecto.idinmobiliaria', read_only=True)
     proyectos = ProyectoSerializer(source='idproyecto', read_only=True)
     tipoinmobiliaria = TipoInmobiliariasSerializer(source='idtipoinmobiliaria', read_only=True)
 
@@ -52,9 +67,31 @@ class IconosSerializer(serializers.ModelSerializer):
         fields = '__all__'  # O lista de campos ['id', 'nombre', 'precio']
 
 class UsuarioSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=False)
+
     class Meta:
         model = Usuario
-        exclude = ['password']
+        fields = ("idusuario", "correo", "nombre", "estado", "password")
+        read_only_fields = ("idusuario", "estado")
+
+    def validate_password(self, value):
+        if not value:
+            return value
+        if str(value).startswith("pbkdf2_"):
+            return value
+        validate_password(value)
+        return value
+
+    def create(self, validated_data):
+        password = validated_data.pop("password", None)
+        user = Usuario(**validated_data)
+        user.is_staff = False
+        user.is_superuser = False
+        user.estado = 1
+        if password:
+            user.password = password if str(password).startswith("pbkdf2_") else make_password(password)
+        user.save()
+        return user
 
 class ClickProyectosSerializer(serializers.ModelSerializer):
     class Meta:
@@ -79,6 +116,85 @@ class IconoProyectoSerializer(serializers.ModelSerializer):
         model = IconoProyecto
         fields = '__all__'
 
+class PuntosProyectoMapaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PuntosProyecto
+        fields = ("latitud", "longitud", "orden")
+
+
+class PuntosSimpleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Puntos
+        fields = ("latitud", "longitud", "orden")
+
+
+class LoteMapaSerializer(serializers.ModelSerializer):
+    puntos = PuntosSimpleSerializer(source="puntos_set", many=True, read_only=True)
+
+    class Meta:
+        model = Lote
+        fields = (
+            "idlote",
+            "nombre",
+            "precio",
+            "vendido",
+            "latitud",
+            "longitud",
+            "puntos",
+        )
+
+
+class IconoProyectoMapaSerializer(serializers.ModelSerializer):
+    nombre = serializers.CharField(source="idicono.nombre", read_only=True)
+    imagen = serializers.ImageField(source="idicono.imagen", read_only=True)
+
+    class Meta:
+        model = IconoProyecto
+        fields = ("latitud", "longitud", "nombre", "imagen")
+
+
+class ProyectoMapaSerializer(serializers.ModelSerializer):
+    iconos = IconoProyectoMapaSerializer(source="iconos_proyecto", many=True, read_only=True)
+
+    class Meta:
+        model = Proyecto
+        fields = (
+            "idproyecto",
+            "nombreproyecto",
+            "latitud",
+            "longitud",
+            "idinmobiliaria",
+            "idtipoinmobiliaria",
+            "estado",
+            "descripcion",
+            "precio",
+            "area_total_m2",
+            "dormitorios",
+            "banos",
+            "cuartos",
+            "titulo_propiedad",
+            "cochera",
+            "cocina",
+            "sala",
+            "patio",
+            "jardin",
+            "terraza",
+            "azotea",
+            "ancho",
+            "largo",
+            "iconos",
+        )
+
+
+class ProyectoDetalleMapaSerializer(serializers.ModelSerializer):
+    puntos = PuntosProyectoMapaSerializer(many=True, read_only=True)
+    lotes = LoteMapaSerializer(source="lote_set", many=True, read_only=True)
+
+    class Meta:
+        model = Proyecto
+        fields = ("idproyecto", "nombreproyecto", "puntos", "lotes")
+
+
 class InmobiliariaRegistroSerializer(serializers.ModelSerializer):
     usuario = serializers.DictField(write_only=True)  # Entrada tipo dict
     usuario_detalle = UsuarioSerializer(source="idusuario", read_only=True)
@@ -101,12 +217,26 @@ class InmobiliariaRegistroSerializer(serializers.ModelSerializer):
         ]
 
     def create(self, validated_data):
-        usuario_data = validated_data.pop('usuario')
-        if "password" in usuario_data:
-            usuario_data["password"] = make_password(usuario_data["password"])
-        usuario = Usuario.objects.create(**usuario_data)
-        inmobiliaria = Inmobiliaria.objects.create(idusuario=usuario, **validated_data)
+        usuario_data = validated_data.pop("usuario", {}) or {}
+        safe_usuario_data = {
+            "correo": usuario_data.get("correo"),
+            "nombre": usuario_data.get("nombre"),
+            "password": usuario_data.get("password"),
+            "estado": 1,
+            "is_staff": False,
+            "is_superuser": False,
+            "is_active": True,
+        }
 
+        if not safe_usuario_data["correo"] or not safe_usuario_data["password"]:
+            raise serializers.ValidationError({"usuario": "correo y password son obligatorios"})
+
+        validate_password(safe_usuario_data["password"])
+        safe_usuario_data["password"] = make_password(safe_usuario_data["password"])
+
+        with transaction.atomic():
+            usuario = Usuario.objects.create(**safe_usuario_data)
+            inmobiliaria = Inmobiliaria.objects.create(idusuario=usuario, **validated_data)
         return inmobiliaria
 
 class LoginSerializer(serializers.Serializer):
@@ -114,19 +244,14 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField()
 
     def validate(self, data):
-        from django.contrib.auth.hashers import check_password
-        from .models import Usuario
-
         correo = data.get("correo")
         password = data.get("password")
-
-        try:
-            usuario = Usuario.objects.get(correo=correo)
-        except Usuario.DoesNotExist:
-            raise serializers.ValidationError("Usuario no encontrado")
-
-        if not check_password(password, usuario.password):
-            raise serializers.ValidationError("Contrase単a incorrecta")
+        request = self.context.get("request")
+        usuario = authenticate(request=request, username=correo, password=password)
+        if not usuario:
+            raise serializers.ValidationError("Credenciales inválidas")
+        if not getattr(usuario, "is_active", True) or getattr(usuario, "estado", 0) != 1:
+            raise serializers.ValidationError("Usuario inactivo")
 
         data["usuario"] = usuario
         return data
@@ -146,6 +271,8 @@ class CustomTokenObtainPairSerializer(serializers.Serializer):
 
         if not check_password(password, usuario.password):
             raise serializers.ValidationError({"password": "Contrase単a incorrecta"})
+        if not getattr(usuario, "is_active", True) or getattr(usuario, "estado", 0) != 1:
+            raise serializers.ValidationError({"correo": "Usuario inactivo"})
 
         # Creamos tokens manualmente
         refresh = RefreshToken.for_user(usuario)
@@ -171,19 +298,3 @@ class CustomTokenObtainPairSerializer(serializers.Serializer):
         if hasattr(user, "inmobiliaria"):
             token["idinmobiliaria"] = user.inmobiliaria.idinmobiliaria
         return token
-        
-        
-# serializers.py
-
-class PuntosSimpleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Puntos
-        fields = ('latitud', 'longitud')
-
-
-class LoteMapaSerializer(serializers.ModelSerializer):
-    puntos = PuntosSimpleSerializer(source='puntos_set', many=True)
-
-    class Meta:
-        model = Lote
-        fields = '__all__'

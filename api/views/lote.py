@@ -1,8 +1,8 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from ..serializers import InmobiliariaSerializer, ImagenesSerializer, PuntosSerializer, LoteSerializer, ProyectoSerializer, LoteMapaSerializer
-from ..models import Inmobiliaria, Imagenes, Puntos, Lote, Proyecto
+from ..serializers import ImagenesSerializer, LoteMapaSerializer, LoteSerializer, ProyectoSerializer
+from ..models import Imagenes, Puntos, Lote, Proyecto
 from rest_framework import status
 from django.db import transaction
 import json
@@ -10,12 +10,21 @@ from rest_framework.decorators import authentication_classes
 from ..authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated
 from .permissions import IsOwnerOfLote, IsSameInmobiliaria
-from rest_framework.exceptions import PermissionDenied
-from rest_framework.views import exception_handler
+from .permissions import is_project_owned_by_user, user_inmobiliaria_id
+from ..security_uploads import build_secure_image_name, validate_uploaded_image
 from django.db.models import Prefetch
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8')
+
+
+def _parse_json_list(value):
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    return value if isinstance(value, list) else []
 
 
 #Nuevo
@@ -25,10 +34,11 @@ def get_lotes_con_puntos(request, idproyecto):
     lotes = (
         Lote.objects
         .filter(idproyecto=idproyecto)
+        .only("idlote", "nombre", "precio", "vendido", "latitud", "longitud", "idproyecto_id")
         .prefetch_related(
             Prefetch(
                 'puntos_set',
-                queryset=Puntos.objects.only('latitud', 'longitud')
+                queryset=Puntos.objects.only('idlote_id', 'latitud', 'longitud', 'orden').order_by('orden')
             )
         )
     )
@@ -42,7 +52,11 @@ def get_lotes_con_puntos(request, idproyecto):
 @permission_classes([AllowAny])
 def list_lotes(request):
     if request.method == 'GET':
-        lotes = Lote.objects.all()
+        lotes = (
+            Lote.objects
+            .select_related("idproyecto", "idproyecto__idinmobiliaria", "idtipoinmobiliaria")
+            .all()
+        )
         serializer = LoteSerializer(lotes, many=True)
         return Response(serializer.data)
 
@@ -51,25 +65,39 @@ def list_lotes(request):
 def lote(request, idproyecto):
     if request.method == 'GET':
         print("Lote ID:", idproyecto)
-        lotes = Lote.objects.filter(idproyecto= idproyecto)
+        lotes = (
+            Lote.objects
+            .filter(idproyecto=idproyecto)
+            .select_related("idproyecto", "idproyecto__idinmobiliaria", "idtipoinmobiliaria")
+        )
         serializer = LoteSerializer(lotes, many=True)
         return Response(serializer.data)
 
 
 @api_view(['GET'])
 @authentication_classes([CustomJWTAuthentication])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def getLote(request, idproyecto):
-    lote = Lote.objects.filter(idproyecto = idproyecto)
+    if not is_project_owned_by_user(idproyecto, request.user):
+        return Response({'error': 'No tienes permisos para ver estos lotes.'}, status=status.HTTP_403_FORBIDDEN)
+
+    lote = (
+        Lote.objects
+        .filter(idproyecto=idproyecto)
+        .select_related("idproyecto", "idproyecto__idinmobiliaria", "idtipoinmobiliaria")
+    )
     serializer = LoteSerializer(lote, many=True)
     return Response(serializer.data)
  
 
 @api_view(['POST'])
 @authentication_classes([CustomJWTAuthentication])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def registerLote(request):
     if request.method == 'POST':
+        project_id = request.data.get('idproyecto')
+        if not project_id or not is_project_owned_by_user(project_id, request.user):
+            return Response({'error': 'No tienes permisos para crear lotes en este proyecto.'}, status=status.HTTP_403_FORBIDDEN)
         
         data = {
             'idtipoinmobiliaria': request.data.get('idtipoinmobiliaria', 1),
@@ -109,39 +137,42 @@ def registerLote(request):
             lote = serializer.save()
             last_id = lote.idlote
 
-            puntos_raw = request.data.get("puntos", [])
-            if isinstance(puntos_raw, str):
-                try:
-                    puntos_data = json.loads(puntos_raw)
-                except json.JSONDecodeError:
-                    puntos_data = []
-            else:
-                puntos_data = puntos_raw
-
-            nuevos_puntos = []
-            for punto in puntos_data:
-                punto["idlote"] = last_id
-                punto["estado"] = 1
-                punto_serializer = PuntosSerializer(data=punto)
-                if punto_serializer.is_valid():
-                    punto_serializer.save()
-                    nuevos_puntos.append(punto_serializer.data)
+            puntos_data = _parse_json_list(request.data.get("puntos", []))
+            puntos_bulk = []
+            for idx, punto in enumerate(puntos_data):
+                lat = punto.get("latitud", punto.get("lat"))
+                lng = punto.get("longitud", punto.get("lng"))
+                if lat is None or lng is None:
+                    continue
+                puntos_bulk.append(
+                    Puntos(
+                        idlote=lote,
+                        latitud=lat,
+                        longitud=lng,
+                        estado=1,
+                        orden=idx + 1,
+                    )
+                )
+            if puntos_bulk:
+                Puntos.objects.bulk_create(puntos_bulk, batch_size=500)
 
             nuevas_imagenes = []
 
             imagenes_files = request.FILES.getlist('imagenes')
             for archivo in imagenes_files:
-                img = {
-                    'idlote': last_id,
-                    'imagen': archivo
-                }
-
+                validate_uploaded_image(archivo)
+                archivo.name = build_secure_image_name(
+                    inmobiliaria_id=user_inmobiliaria_id(request.user),
+                    proyecto_id=project_id,
+                    image_type="lote",
+                    original_name=archivo.name,
+                )
                 imagen_serializer = ImagenesSerializer(data={'idlote': last_id, 'imagen': archivo})
                 if imagen_serializer.is_valid():
                     imagen_serializer.save()
                     nuevas_imagenes.append(imagen_serializer.data)
 
-            imagenes_json = request.data.get("imagenes_creadas", [])
+            imagenes_json = _parse_json_list(request.data.get("imagenes_creadas", []))
             for img in imagenes_json:
                 img["idlote"] = last_id
                 imagen_serializer = ImagenesSerializer(data=img)
@@ -152,7 +183,7 @@ def registerLote(request):
             return Response({
                 "lote": serializer.data,
                 "imagenes_creadas": nuevas_imagenes,
-                "puntos_creados": nuevos_puntos
+                "puntos_creados": len(puntos_bulk)
             }, status=201)
         
         return Response(serializer.errors, status=400)
@@ -180,28 +211,43 @@ def updateLote(request, idlote):
             lote = serializer.save()
 
             # Actualizar puntos
-            puntos_raw = request.data.get("puntos", [])
-            if isinstance(puntos_raw, str):
-                try:
-                    puntos_raw = json.loads(puntos_raw)
-                except json.JSONDecodeError:
-                    puntos_raw = []
-
-            nuevos_puntos = []
+            puntos_raw = _parse_json_list(request.data.get("puntos", []))
             if puntos_raw:
                 lote.puntos_set.all().delete()
-                for p in puntos_raw:
-                    p["idlote"], p["estado"] = lote.idlote, 1
-                    ps = PuntosSerializer(data=p)
-                    if ps.is_valid(): ps.save(); nuevos_puntos.append(ps.data)
+                puntos_bulk = []
+                for idx, p in enumerate(puntos_raw):
+                    lat = p.get("latitud", p.get("lat"))
+                    lng = p.get("longitud", p.get("lng"))
+                    if lat is None or lng is None:
+                        continue
+                    puntos_bulk.append(
+                        Puntos(
+                            idlote=lote,
+                            latitud=lat,
+                            longitud=lng,
+                            estado=1,
+                            orden=idx + 1,
+                        )
+                    )
+                if puntos_bulk:
+                    Puntos.objects.bulk_create(puntos_bulk, batch_size=500)
+            else:
+                puntos_bulk = []
 
             # Actualizar imágenes
             nuevas_imagenes = []
             for archivo in request.FILES.getlist('imagenes'):
+                validate_uploaded_image(archivo)
+                archivo.name = build_secure_image_name(
+                    inmobiliaria_id=lote.idproyecto.idinmobiliaria_id if lote.idproyecto else user_inmobiliaria_id(request.user),
+                    proyecto_id=lote.idproyecto_id,
+                    image_type="lote-update",
+                    original_name=archivo.name,
+                )
                 img = ImagenesSerializer(data={'idlote': lote.idlote, 'imagen': archivo})
                 if img.is_valid(): img.save(); nuevas_imagenes.append(img.data)
 
-            for img_json in request.data.get("imagenes_creadas", []):
+            for img_json in _parse_json_list(request.data.get("imagenes_creadas", [])):
                 img_json["idlote"] = lote.idlote
                 img = ImagenesSerializer(data=img_json)
                 if img.is_valid(): img.save(); nuevas_imagenes.append(img.data)
@@ -209,7 +255,7 @@ def updateLote(request, idlote):
         return Response({
             "message": "Lote actualizado correctamente",
             "lote": serializer.data,
-            "puntos": nuevos_puntos,
+            "puntos": len(puntos_bulk),
             "imagenes": nuevas_imagenes
         }, status=status.HTTP_200_OK)
 
@@ -318,7 +364,7 @@ def deleteLote(request, idlote):
 
 @api_view(['POST'])
 @authentication_classes([CustomJWTAuthentication])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def registerLotesMasivo(request):
     try:
         # Extraer lotes del FormData
@@ -385,26 +431,46 @@ def registerLotesMasivo(request):
 
                     serializer = LoteSerializer(data=data_lote)
                     if serializer.is_valid():
+                        project_id = data_lote.get("idproyecto")
+                        if not project_id or not is_project_owned_by_user(project_id, request.user):
+                            errores.append({
+                                'indice': idx,
+                                'nombre': lote_data.get('nombre', f'Lote {idx}'),
+                                'error': 'Sin permisos sobre el proyecto'
+                            })
+                            continue
+
                         lote = serializer.save()
 
                         # Guardar puntos
-                        puntos_creados = []
+                        puntos_bulk = []
                         for punto in puntos_data:
-                            punto_data = {
-                                'idlote': lote.idlote,
-                                'latitud': punto.get('lat') or punto.get('latitud'),
-                                'longitud': punto.get('lng') or punto.get('longitud'),
-                                'estado': 1
-                            }
-                            punto_serializer = PuntosSerializer(data=punto_data)
-                            if punto_serializer.is_valid():
-                                punto_serializer.save()
-                                puntos_creados.append(punto_serializer.data)
+                            lat = punto.get('lat') or punto.get('latitud')
+                            lng = punto.get('lng') or punto.get('longitud')
+                            if lat is None or lng is None:
+                                continue
+                            puntos_bulk.append(
+                                Puntos(
+                                    idlote=lote,
+                                    latitud=lat,
+                                    longitud=lng,
+                                    estado=1
+                                )
+                            )
+                        if puntos_bulk:
+                            Puntos.objects.bulk_create(puntos_bulk, batch_size=500)
 
                         # Guardar imágenes
                         imagenes = request.FILES.getlist(f"imagenes_{idx}")
                         imagenes_creadas = []
                         for img in imagenes:
+                            validate_uploaded_image(img)
+                            img.name = build_secure_image_name(
+                                inmobiliaria_id=user_inmobiliaria_id(request.user),
+                                proyecto_id=project_id,
+                                image_type="lote-masivo",
+                                original_name=img.name,
+                            )
                             img_serializer = ImagenesSerializer(data={'idlote': lote.idlote, 'imagen': img})
                             if img_serializer.is_valid():
                                 img_serializer.save()
@@ -412,7 +478,7 @@ def registerLotesMasivo(request):
 
                         lotes_creados.append({
                             'lote': serializer.data,
-                            'puntos': puntos_creados,
+                            'puntos': len(puntos_bulk),
                             'imagenes': imagenes_creadas
                         })
                     else:
