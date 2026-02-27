@@ -32,6 +32,7 @@ staticfiles/
 # Migrations (opcional, si trabajas en equipo NO lo ignores)
 */migrations/*
 !*/migrations/__init__.py
+!*/migrations/*.py
 
 # PyCharm
 .idea/
