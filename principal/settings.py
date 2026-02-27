@@ -99,6 +99,13 @@ DATABASES = {
         'PASSWORD': _get_env('DB_PASSWORD', required=True),
         'HOST': _get_env('DB_HOST', '127.0.0.1'),
         'PORT': _get_env('DB_PORT', '3306'),
+        'OPTIONS': {
+            'init_command': _get_env(
+                'DB_INIT_COMMAND',
+                "SET sql_mode='STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,"
+                "ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+            ),
+        },
     }
 }
 if "test" in sys.argv:
