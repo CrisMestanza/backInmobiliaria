@@ -156,6 +156,7 @@ USE_TZ = True
 # ARCHIVOS ESTÁTICOS Y MEDIA
 # ============================================
 STATIC_URL = 'static/'
+STATIC_ROOT = _get_env("DJANGO_STATIC_ROOT", str(BASE_DIR / "staticfiles"))
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
