@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import transaction
+import json
 from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -117,6 +118,14 @@ def deleteUsuario(request, idusuario):
 @throttle_classes([RegisterRateThrottle])
 def register_inmobiliaria_usuario(request):
     usuario_payload = request.data.get("usuario")
+    if isinstance(usuario_payload, str):
+        try:
+            usuario_payload = json.loads(usuario_payload)
+        except json.JSONDecodeError:
+            return Response(
+                {"usuario": ["Debe ser JSON válido."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
     if usuario_payload is None:
         usuario_payload = {}
     if not isinstance(usuario_payload, dict):

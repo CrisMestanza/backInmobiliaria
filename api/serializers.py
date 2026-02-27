@@ -2,6 +2,7 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth import authenticate
 from django.db import transaction
 from django.contrib.auth.password_validation import validate_password
+import json
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -215,6 +216,16 @@ class InmobiliariaRegistroSerializer(serializers.ModelSerializer):
             'usuario',
             'usuario_detalle'
         ]
+
+    def validate_usuario(self, value):
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise serializers.ValidationError("El campo usuario debe ser un objeto JSON válido.")
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("El campo usuario debe ser un objeto.")
+        return value
 
     def create(self, validated_data):
         usuario_data = validated_data.pop("usuario", {}) or {}
