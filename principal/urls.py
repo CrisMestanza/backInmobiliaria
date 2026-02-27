@@ -22,7 +22,7 @@ from django.http import HttpResponse
 
 def home(request):
     """1. Función de vista para la página de inicio."""
-    return HttpResponse("API GeoHabita funcionando v1.0")
+    return HttpResponse("API GeoHabita funcionando v1.1")
 
 urlpatterns = [
     path('', home),
