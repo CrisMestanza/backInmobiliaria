@@ -63,6 +63,9 @@ urlpatterns = [
     path('deleteUsuario/<int:idusuario>/', deleteUsuario),
     path('register_inmobiliaria_usuario/', register_inmobiliaria_usuario),
     path('login/', login_usuario),
+    path('recovery/request-code/', recovery_request_code),
+    path('recovery/verify-code/', recovery_verify_code),
+    path('recovery/reset-password/', recovery_reset_password),
     path('logout/', logout),
     
     #Iconos

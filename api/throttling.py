@@ -26,3 +26,15 @@ class ClickRateThrottle(BaseIPThrottle):
 
 class RegisterRateThrottle(BaseIPThrottle):
     scope = "register"
+
+
+class RecoveryRequestRateThrottle(BaseIPThrottle):
+    scope = "recovery_request"
+
+
+class RecoveryVerifyRateThrottle(BaseIPThrottle):
+    scope = "recovery_verify"
+
+
+class RecoveryResetRateThrottle(BaseIPThrottle):
+    scope = "recovery_reset"

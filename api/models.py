@@ -211,6 +211,28 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         managed = False
         db_table = "usuario"
 
+
+class PasswordResetCode(models.Model):
+    idpasswordreset = models.AutoField(primary_key=True)
+    idusuario = models.ForeignKey(
+        Usuario,
+        models.DO_NOTHING,
+        db_column="idusuario",
+        related_name="password_reset_codes",
+    )
+    codigo_hash = models.CharField(max_length=255)
+    reset_token = models.CharField(max_length=120, blank=True, null=True)
+    attempts = models.IntegerField(default=0)
+    expires_at = models.DateTimeField()
+    verified_at = models.DateTimeField(blank=True, null=True)
+    used_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    request_ip = models.CharField(max_length=80, blank=True, null=True)
+
+    class Meta:
+        managed = True
+        db_table = "password_reset_code"
+
 class ClicksContactos(models.Model):
     idclicksContactos = models.AutoField(primary_key=True)
     idproyecto = models.ForeignKey(

@@ -13,8 +13,7 @@ from django.core.exceptions import ImproperlyConfigured
 pymysql.install_as_MySQLdb()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
-
+load_dotenv(BASE_DIR / ".env", override=True)
 
 def _get_env(name, default=None, required=False):
     value = os.getenv(name, default)
@@ -138,6 +137,9 @@ REST_FRAMEWORK = {
         "refresh": _get_env("DRF_THROTTLE_REFRESH", "20/minute"),
         "clicks": _get_env("DRF_THROTTLE_CLICKS", "60/minute"),
         "register": _get_env("DRF_THROTTLE_REGISTER", "5/hour"),
+        "recovery_request": _get_env("DRF_THROTTLE_RECOVERY_REQUEST", "5/hour"),
+        "recovery_verify": _get_env("DRF_THROTTLE_RECOVERY_VERIFY", "15/hour"),
+        "recovery_reset": _get_env("DRF_THROTTLE_RECOVERY_RESET", "8/hour"),
     },
 }
 
@@ -223,7 +225,45 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+# Recovery / mail settings
+RECOVERY_CODE_TTL_MINUTES = int(_get_env("RECOVERY_CODE_TTL_MINUTES", "10"))
+RECOVERY_CODE_MAX_ATTEMPTS = int(_get_env("RECOVERY_CODE_MAX_ATTEMPTS", "5"))
+RECOVERY_CODE_COOLDOWN_SECONDS = int(_get_env("RECOVERY_CODE_COOLDOWN_SECONDS", "60"))
+
+EMAIL_BACKEND = _get_env("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = _get_env("EMAIL_HOST", "")
+EMAIL_PORT = int(_get_env("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = _get_env("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = _get_env("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = _get_bool("EMAIL_USE_TLS", True)
+EMAIL_USE_SSL = _get_bool("EMAIL_USE_SSL", False)
+DEFAULT_FROM_EMAIL = _get_env("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@geohabita.com")
+EMAIL_TIMEOUT = int(_get_env("EMAIL_TIMEOUT", "20"))
+
 # ============================================
 # CLAVE PRIMARIA POR DEFECTO
 # ============================================
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {
+            "format": "[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        }
+    },
+    "loggers": {
+        "api.recovery": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        }
+    },
+}
