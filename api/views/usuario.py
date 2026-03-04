@@ -2,18 +2,28 @@ from django.conf import settings
 from django.db import transaction
 import json
 from rest_framework import status
-from rest_framework.decorators import api_view, authentication_classes, permission_classes, throttle_classes
+from rest_framework.decorators import (
+    api_view,
+    authentication_classes,
+    permission_classes,
+    throttle_classes,
+)
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from ..authentication import CustomJWTAuthentication
-from ..models import Inmobiliaria, Proyecto, Usuario
-from ..serializers import InmobiliariaSerializer, LoginSerializer, ProyectoSerializer, UsuarioSerializer
-from ..throttling import LoginRateThrottle, RefreshRateThrottle, RegisterRateThrottle
-from .permissions import IsSuperUser
+from api.authentication import CustomJWTAuthentication
+from api.models import Inmobiliaria, Proyecto, Usuario
+from api.serializers import (
+    InmobiliariaSerializer,
+    LoginSerializer,
+    ProyectoSerializer,
+    UsuarioSerializer,
+)
+from api.throttling import LoginRateThrottle, RefreshRateThrottle, RegisterRateThrottle
+from api.views.permissions import IsSuperUser
 
 SECRET_KEY = settings.SECRET_KEY
 
@@ -49,13 +59,18 @@ def registerUsuario(request):
 @permission_classes([IsAuthenticated])
 def listUsuarioId(request, idusuario):
     if request.user.idusuario != idusuario and not request.user.is_superuser:
-        return Response({"error": "No tienes permisos para ver este usuario"}, status=status.HTTP_403_FORBIDDEN)
+        return Response(
+            {"error": "No tienes permisos para ver este usuario"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     usuario = Usuario.objects.filter(idusuario=idusuario, estado=1).first()
     if usuario:
         serializer = UsuarioSerializer(usuario)
         return Response(serializer.data)
-    return Response({"error": "Usuario no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+    return Response(
+        {"error": "Usuario no encontrado"}, status=status.HTTP_404_NOT_FOUND
+    )
 
 
 @api_view(["PUT"])
@@ -63,13 +78,24 @@ def listUsuarioId(request, idusuario):
 @permission_classes([IsAuthenticated])
 def updateUsuario(request, idusuario):
     if request.user.idusuario != idusuario and not request.user.is_superuser:
-        return Response({"error": "No tienes permisos para editar este usuario"}, status=status.HTTP_403_FORBIDDEN)
+        return Response(
+            {"error": "No tienes permisos para editar este usuario"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     usuario = Usuario.objects.filter(idusuario=idusuario).first()
     if not usuario:
-        return Response({"error": "Usuario no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {"error": "Usuario no encontrado"}, status=status.HTTP_404_NOT_FOUND
+        )
 
-    forbidden_privilege_fields = {"is_superuser", "is_staff", "is_active", "groups", "user_permissions"}
+    forbidden_privilege_fields = {
+        "is_superuser",
+        "is_staff",
+        "is_active",
+        "groups",
+        "user_permissions",
+    }
     if any(field in request.data for field in forbidden_privilege_fields):
         return Response(
             {"error": "No puedes modificar campos de privilegios."},
@@ -102,15 +128,22 @@ def updateUsuario(request, idusuario):
 @permission_classes([IsAuthenticated])
 def deleteUsuario(request, idusuario):
     if request.user.idusuario != idusuario and not request.user.is_superuser:
-        return Response({"error": "No tienes permisos para eliminar este usuario"}, status=status.HTTP_403_FORBIDDEN)
+        return Response(
+            {"error": "No tienes permisos para eliminar este usuario"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     usuario = Usuario.objects.filter(idusuario=idusuario).first()
     if not usuario:
-        return Response({"error": "Usuario no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {"error": "Usuario no encontrado"}, status=status.HTTP_404_NOT_FOUND
+        )
 
     usuario.estado = 0
     usuario.save(update_fields=["estado"])
-    return Response({"message": "Usuario desactivado correctamente"}, status=status.HTTP_200_OK)
+    return Response(
+        {"message": "Usuario desactivado correctamente"}, status=status.HTTP_200_OK
+    )
 
 
 @api_view(["POST"])
@@ -194,8 +227,12 @@ def login_usuario(request):
                     "nombre": usuario.nombre,
                 },
                 "inmobiliaria": {
-                    "idinmobiliaria": inmobiliaria.idinmobiliaria if inmobiliaria else None,
-                    "nombreinmobiliaria": inmobiliaria.nombreinmobiliaria if inmobiliaria else None,
+                    "idinmobiliaria": inmobiliaria.idinmobiliaria
+                    if inmobiliaria
+                    else None,
+                    "nombreinmobiliaria": inmobiliaria.nombreinmobiliaria
+                    if inmobiliaria
+                    else None,
                 }
                 if inmobiliaria
                 else None,
@@ -212,17 +249,26 @@ def login_usuario(request):
 def refresh_token(request):
     token = request.data.get("refresh")
     if not token:
-        return Response({"detail": "Token no proporcionado"}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"detail": "Token no proporcionado"}, status=status.HTTP_400_BAD_REQUEST
+        )
 
     try:
         old_refresh = RefreshToken(token)
         user_id = old_refresh.get("user_id")
         if not user_id:
-            return Response({"detail": "Token inválido"}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response(
+                {"detail": "Token inválido"}, status=status.HTTP_401_UNAUTHORIZED
+            )
 
-        user = Usuario.objects.filter(idusuario=user_id, estado=1, is_active=True).first()
+        user = Usuario.objects.filter(
+            idusuario=user_id, estado=1, is_active=True
+        ).first()
         if not user:
-            return Response({"detail": "Usuario inactivo o no encontrado"}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response(
+                {"detail": "Usuario inactivo o no encontrado"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         new_refresh = RefreshToken.for_user(user)
         if getattr(settings, "SIMPLE_JWT", {}).get("BLACKLIST_AFTER_ROTATION", False):
@@ -231,9 +277,13 @@ def refresh_token(request):
             except Exception:
                 pass
 
-        return Response({"access": str(new_refresh.access_token), "refresh": str(new_refresh)})
+        return Response(
+            {"access": str(new_refresh.access_token), "refresh": str(new_refresh)}
+        )
     except TokenError:
-        return Response({"detail": "Token inválido"}, status=status.HTTP_401_UNAUTHORIZED)
+        return Response(
+            {"detail": "Token inválido"}, status=status.HTTP_401_UNAUTHORIZED
+        )
 
 
 @api_view(["GET"])
@@ -242,7 +292,10 @@ def refresh_token(request):
 def mis_proyectos(request):
     inmobiliaria = Inmobiliaria.objects.filter(idusuario=request.user).first()
     if not inmobiliaria:
-        return Response({"detail": "No tiene inmobiliaria asociada"}, status=status.HTTP_403_FORBIDDEN)
+        return Response(
+            {"detail": "No tiene inmobiliaria asociada"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     proyectos = Proyecto.objects.filter(idinmobiliaria=inmobiliaria.idinmobiliaria)
     serializer = ProyectoSerializer(proyectos, many=True)

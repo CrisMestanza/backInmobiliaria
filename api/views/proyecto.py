@@ -1,15 +1,18 @@
 import json
-import sys
 
 from django.db import transaction
 from django.db.models import Prefetch
 from rest_framework import status
-from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.decorators import (
+    api_view,
+    authentication_classes,
+    permission_classes,
+)
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from ..authentication import CustomJWTAuthentication
-from ..models import (
+from api.authentication import CustomJWTAuthentication
+from api.models import (
     ClickProyectos,
     ClicksContactos,
     IconoProyecto,
@@ -21,11 +24,13 @@ from ..models import (
     Puntos,
     PuntosProyecto,
 )
-from ..serializers import ProyectoDetalleMapaSerializer, ProyectoMapaSerializer, ProyectoSerializer
-from .permissions import IsOwnerOfProyecto, user_inmobiliaria_id
-from ..security_uploads import build_secure_image_name, validate_uploaded_image
-
-sys.stdout.reconfigure(encoding="utf-8")
+from api.serializers import (
+    ProyectoDetalleMapaSerializer,
+    ProyectoMapaSerializer,
+    ProyectoSerializer,
+)
+from api.views.permissions import IsOwnerOfProyecto, user_inmobiliaria_id
+from api.security_uploads import build_secure_image_name, validate_uploaded_image
 
 PROYECTO_MAP_ONLY_FIELDS = (
     "idproyecto",
@@ -62,9 +67,10 @@ def _parse_json_list(value):
             return []
     return value if isinstance(value, list) else []
 
-@api_view(['GET'])
+
+@api_view(["GET"])
 @permission_classes([AllowAny])
-def listProyectos(request):
+def listProyectos(_request):
     proyectos = (
         Proyecto.objects.filter(estado=1)
         .only(*PROYECTO_MAP_ONLY_FIELDS)
@@ -85,14 +91,22 @@ def listProyectos(request):
     )
     serializer = ProyectoMapaSerializer(proyectos, many=True)
     return Response(serializer.data)
- 
-@api_view(['POST'])
+
+
+@api_view(["POST"])
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def registerProyecto(request):
-    inmobiliaria_usuario = Inmobiliaria.objects.filter(idusuario=request.user).only("idinmobiliaria").first()
+    inmobiliaria_usuario = (
+        Inmobiliaria.objects.filter(idusuario=request.user)
+        .only("idinmobiliaria")
+        .first()
+    )
     if not inmobiliaria_usuario:
-        return Response({"error": "Usuario sin inmobiliaria asociada"}, status=status.HTTP_403_FORBIDDEN)
+        return Response(
+            {"error": "Usuario sin inmobiliaria asociada"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     data = {
         "nombreproyecto": request.data.get("nombreproyecto"),
@@ -154,7 +168,9 @@ def registerProyecto(request):
                 image_type="proyecto",
                 original_name=img.name,
             )
-            imagen_obj = ImagenesProyecto.objects.create(idproyecto=proyecto, imagenproyecto=img)
+            imagen_obj = ImagenesProyecto.objects.create(
+                idproyecto=proyecto, imagenproyecto=img
+            )
             nuevas_imagenes.append(
                 {
                     "idimagenesp": imagen_obj.idimagenesp,
@@ -173,16 +189,18 @@ def registerProyecto(request):
     )
 
 
-@api_view(['GET'])
+@api_view(["GET"])
 @permission_classes([AllowAny])
-def listProyectoId(request, idproyecto):
+def listProyectoId(_request, idproyecto):
     proyecto = (
         Proyecto.objects.filter(idproyecto=idproyecto, estado=1)
         .only("idproyecto", "nombreproyecto")
         .prefetch_related(
             Prefetch(
                 "puntos",
-                queryset=PuntosProyecto.objects.only("idproyecto_id", "latitud", "longitud", "orden").order_by("orden"),
+                queryset=PuntosProyecto.objects.only(
+                    "idproyecto_id", "latitud", "longitud", "orden"
+                ).order_by("orden"),
             ),
             Prefetch(
                 "lote_set",
@@ -197,7 +215,9 @@ def listProyectoId(request, idproyecto):
                 ).prefetch_related(
                     Prefetch(
                         "puntos_set",
-                        queryset=Puntos.objects.only("idlote_id", "latitud", "longitud", "orden").order_by("orden"),
+                        queryset=Puntos.objects.only(
+                            "idlote_id", "latitud", "longitud", "orden"
+                        ).order_by("orden"),
                     )
                 ),
             ),
@@ -205,38 +225,50 @@ def listProyectoId(request, idproyecto):
         .first()
     )
     if not proyecto:
-        return Response({"error": "Proyecto no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {"error": "Proyecto no encontrado"}, status=status.HTTP_404_NOT_FOUND
+        )
 
     serializer = ProyectoDetalleMapaSerializer(proyecto)
     return Response(serializer.data)
-    
-    
-@api_view(['GET'])
+
+
+@api_view(["GET"])
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def getProyecto(request, idinmobiliaria):
     owner_inmo_id = user_inmobiliaria_id(request.user)
     if not owner_inmo_id or int(idinmobiliaria) != int(owner_inmo_id):
-        return Response({"error": "No tienes permisos para ver estos proyectos."}, status=status.HTTP_403_FORBIDDEN)
+        return Response(
+            {"error": "No tienes permisos para ver estos proyectos."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     proyecto = Proyecto.objects.filter(idinmobiliaria=idinmobiliaria)
     serializer = ProyectoSerializer(proyecto, many=True)
     return Response(serializer.data)
- 
 
-@api_view(['PUT'])
+
+@api_view(["PUT"])
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated, IsOwnerOfProyecto])
 def updateProyecto(request, idproyecto):
     try:
         proyecto = Proyecto.objects.get(idproyecto=idproyecto)
     except Proyecto.DoesNotExist:
-        return Response({'error': 'Proyecto no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {"error": "Proyecto no encontrado"}, status=status.HTTP_404_NOT_FOUND
+        )
 
     inmobiliaria_usuario = Inmobiliaria.objects.filter(idusuario=request.user).first()
-    if not inmobiliaria_usuario or proyecto.idinmobiliaria_id != inmobiliaria_usuario.idinmobiliaria:
-        return Response({"error": "No tienes permisos para editar este proyecto."},
-                    status=status.HTTP_403_FORBIDDEN)
+    if (
+        not inmobiliaria_usuario
+        or proyecto.idinmobiliaria_id != inmobiliaria_usuario.idinmobiliaria
+    ):
+        return Response(
+            {"error": "No tienes permisos para editar este proyecto."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     serializer = ProyectoSerializer(proyecto, data=request.data, partial=True)
     if serializer.is_valid():
@@ -244,23 +276,32 @@ def updateProyecto(request, idproyecto):
         return Response(serializer.data, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-@api_view(['DELETE'])
+
+@api_view(["DELETE"])
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def deleteProyecto(request, idproyecto):
     try:
         proyecto = Proyecto.objects.filter(idproyecto=idproyecto).first()
         if not proyecto:
-            return Response({"error": "Proyecto no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": "Proyecto no encontrado."}, status=status.HTTP_404_NOT_FOUND
+            )
 
-        inmobiliaria_usuario = Inmobiliaria.objects.filter(idusuario=request.user).first()
+        inmobiliaria_usuario = Inmobiliaria.objects.filter(
+            idusuario=request.user
+        ).first()
         if not inmobiliaria_usuario:
-            return Response({"error": "El usuario no tiene una inmobiliaria asociada."},
-                            status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"error": "El usuario no tiene una inmobiliaria asociada."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if proyecto.idinmobiliaria_id != inmobiliaria_usuario.idinmobiliaria:
-            return Response({"error": "No tienes permisos para eliminar este proyecto."},
-                            status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"error": "No tienes permisos para eliminar este proyecto."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         with transaction.atomic():
             # 🔹 Eliminar primero relaciones dependientes
@@ -273,20 +314,21 @@ def deleteProyecto(request, idproyecto):
             PuntosProyecto.objects.filter(idproyecto=idproyecto).delete()
             proyecto.delete()
 
-        return Response({
-            "message": "Proyecto y todas sus relaciones eliminadas correctamente."
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {"message": "Proyecto y todas sus relaciones eliminadas correctamente."},
+            status=status.HTTP_200_OK,
+        )
 
     except Exception as e:
         return Response(
             {"error": f"Ocurrió un error al eliminar el proyecto: {str(e)}"},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
 
-@api_view(['GET'])
+@api_view(["GET"])
 @permission_classes([AllowAny])
-def tipoProyecto(request, idtipoinmobiliaria):
+def tipoProyecto(_request, idtipoinmobiliaria):
     tipo = (
         Proyecto.objects.filter(estado=1, idtipoinmobiliaria=idtipoinmobiliaria)
         .only(*PROYECTO_MAP_ONLY_FIELDS)
@@ -307,21 +349,22 @@ def tipoProyecto(request, idtipoinmobiliaria):
     )
     serializer = ProyectoMapaSerializer(tipo, many=True)
     return Response(serializer.data)
-    
-@api_view(['GET'])
+
+
+@api_view(["GET"])
 @permission_classes([AllowAny])
-def listProyectosInmobiliaria(request, idinmobiliaria):
+def listProyectosInmobiliaria(_request, idinmobiliaria):
     proyectos = Proyecto.objects.filter(idinmobiliaria=idinmobiliaria, estado=1)
     serializer = ProyectoSerializer(proyectos, many=True)
     return Response(serializer.data)
-        
-        
-@api_view(['GET'])
+
+
+@api_view(["GET"])
 @permission_classes([AllowAny])
 def proyectos_filtrados(request):
-    tipo = request.GET.get('tipo')        # idtipoinmobiliaria
-    rango = request.GET.get('rango')      # 15001-35000
-    inmo  = request.GET.get('inmo')       # opcional
+    tipo = request.GET.get("tipo")  # idtipoinmobiliaria
+    rango = request.GET.get("rango")  # 15001-35000
+    inmo = request.GET.get("inmo")  # opcional
 
     proyectos = (
         Proyecto.objects.filter(estado=1)

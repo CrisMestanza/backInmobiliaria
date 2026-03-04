@@ -11,11 +11,10 @@
 # from langchain.memory import ConversationBufferMemory
 # from langchain.prompts import PromptTemplate
 # from django.views.decorators.csrf import csrf_exempt
-# from ..models import Proyecto, Lote
-# from ..serializers import ProyectoSerializer, LoteSerializer
+# from api.models import Proyecto, Lote
+# from api.serializers import ProyectoSerializer, LoteSerializer
 # from rest_framework.permissions import AllowAny
 # from rest_framework.decorators import permission_classes
-
 
 
 # # 🔑 Configura tu API Key de OpenAI
@@ -23,7 +22,7 @@
 
 # @api_view(["POST"])
 # def crearBdVectorialDesdeCSVs(request):
-    
+
 #     # Ruta a la carpeta con tus CSV
 #     CSV_FOLDER = "csv"
 
@@ -51,10 +50,10 @@
 
 # @csrf_exempt
 # @api_view(["POST"])
-# @permission_classes([AllowAny]) 
+# @permission_classes([AllowAny])
 # def chatBot(request):
 
-    
+
 #     embeddings = OpenAIEmbeddings()
 
 #     # Solo cargas lo que ya está persistido
@@ -75,7 +74,7 @@
 #     Si se trata de lotes, busca en lote.csv.
 #     los precios están en soles.
 #     Si no sabes la respuesta, di que no lo sabes, no inventes nada.
-#     si vas a responder con información de lotes entonces agrega al final la palabra pk y para casas agrega al final la palabra fk 
+#     si vas a responder con información de lotes entonces agrega al final la palabra pk y para casas agrega al final la palabra fk
 #     Si vas a responder sobre casa o lote, responde con guión y seguido de todos los campos, el nombre del campo, dos puntos, y el valor así como este ejemplo:
 #     - id: 1
 #     nombrelote: Lote A
@@ -168,21 +167,21 @@
 #     mensaje = request.data.get("mensaje")  # con DRF
 #     result = qa_chain.invoke({"question": mensaje})
 #     print("Bot:", result["answer"])
-    
+
 #     with open("respuesta.txt", "w", encoding="utf-8") as f:
 #         f.write(result["answer"])
-        
+
 #     respuesta_final = {"respuesta": result["answer"]}
 #     # Si se trata de lotes
 #     if "pk" in result["answer"]:
 #         respuesta = result["answer"].replace("pk", "").strip()
 #         lotes = parsear_bloques(respuesta, tipo="lote")
 #         json_data = {"lotes": lotes}
-        
+
 #         with open("lotes.json", "w", encoding="utf-8") as f:
 #             json.dump(json_data, f, ensure_ascii=False, indent=2)
 #         print("✅ Lotes guardados en lotes.json")
-        
+
 #         print(json.dumps(json_data, indent=2, ensure_ascii=False))
 #         respuesta_final["lotes"] = lotes
 
@@ -195,15 +194,15 @@
 #             json.dump(json_data, f, ensure_ascii=False, indent=2)
 #         print("✅ Casas guardadas en casas.json")
 #         print(json.dumps(json_data, indent=2, ensure_ascii=False))
-#         respuesta_final["casas"] = casas  
-        
+#         respuesta_final["casas"] = casas
+
 #     return Response(respuesta_final, status=200)
 
 
 # # Extraer los puntos de los lotes y proyectos
 # @csrf_exempt
 # @api_view(["GET"])
-# @permission_classes([AllowAny]) 
+# @permission_classes([AllowAny])
 # def getCasas(request):
 #     id = request.data.get("id", None)
 #     casas = Proyecto.objects.filter(idproyecto=id, estado=1)
@@ -215,7 +214,7 @@
 # # Extraer los puntos de los lotes y proyectos
 # @csrf_exempt
 # @api_view(["GET"])
-# @permission_classes([AllowAny]) 
+# @permission_classes([AllowAny])
 # def getLotes(request):
 #     id = request.data.get("id", None)
 #     lotes = Lote.objects.filter(idlote=id, estado=1)

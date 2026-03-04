@@ -54,7 +54,7 @@ class Inmobiliaria(models.Model):
 class Lote(models.Model):
     idlote = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=200, blank=True, null=True)
-    descripcion = models.CharField(max_length=250, blank=True, null=True)
+    descripcion = models.CharField(max_length=2000, blank=True, null=True)
     estado = models.IntegerField(blank=True, null=True)
     latitud = models.CharField(max_length=45, blank=True, null=True)
     longitud = models.CharField(max_length=45, blank=True, null=True)
@@ -89,7 +89,7 @@ class Proyecto(models.Model):
     latitud = models.CharField(max_length=50, blank=True, null=True)
     idinmobiliaria = models.ForeignKey(Inmobiliaria, models.DO_NOTHING, db_column='idinmobiliaria', blank=True, null=True)
     estado = models.IntegerField(blank=True, null=True)
-    descripcion = models.CharField(max_length=1000, blank=True, null=True)
+    descripcion = models.CharField(max_length=6000, blank=True, null=True)
     idtipoinmobiliaria = models.ForeignKey('TipoInmobiliaria', models.DO_NOTHING, db_column='idtipoinmobiliaria', blank=True, null=True)
     precio = models.FloatField(blank=True, null=True)
     area_total_m2 = models.CharField(max_length=60, blank=True, null=True)
@@ -156,7 +156,7 @@ class IconoProyecto(models.Model):
     # Por si el mismo ícono debe mostrarse en distintas coordenadas dentro de un proyecto
     latitud = models.CharField(max_length=50, blank=True, null=True)
     longitud = models.CharField(max_length=50, blank=True, null=True)
-    
+
     estado = models.IntegerField(blank=True, null=True, default=1)
 
     class Meta:
@@ -228,7 +228,7 @@ class ClicksContactos(models.Model):
     class Meta:
         managed = False
         db_table = 'clickscontactos'
-        
+
 class ClickProyectos(models.Model):
     idclickProyectos = models.AutoField(primary_key=True, db_column='idclickProyectos')  # ✅ corregido
     idproyecto = models.ForeignKey(

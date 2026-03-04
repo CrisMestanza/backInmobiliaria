@@ -1,20 +1,24 @@
-from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework.decorators import (
+    api_view,
+    permission_classes,
+    authentication_classes,
+)
+from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from ..serializers import  IconoProyectoSerializer
-from ..models import IconoProyecto
-from rest_framework import status
-from ..authentication import CustomJWTAuthentication
-from .permissions import is_project_owned_by_user
-import sys
-sys.stdout.reconfigure(encoding='utf-8')
-@api_view(['GET'])
+
+from api.authentication import CustomJWTAuthentication
+from api.models import IconoProyecto
+from api.serializers import IconoProyectoSerializer
+from api.views.permissions import is_project_owned_by_user
+
+
+@api_view(["GET"])
 @permission_classes([AllowAny])
-def list_iconos_disponibles(request):
+def list_iconos_disponibles(_request):
     try:
         iconos = (
-            IconoProyecto.objects
-            .filter(estado=1)
+            IconoProyecto.objects.filter(estado=1)
             .select_related("idicono")
             .only(
                 "idiconoproyecto",
@@ -32,15 +36,15 @@ def list_iconos_disponibles(request):
         serializer = IconoProyectoSerializer(iconos, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-@api_view(['GET'])
+
+@api_view(["GET"])
 @permission_classes([AllowAny])
-def list_iconos_proyecto(request, idproyecto):
+def list_iconos_proyecto(_request, idproyecto):
     try:
         iconos = (
-            IconoProyecto.objects
-            .filter(idproyecto=idproyecto, estado=1)
+            IconoProyecto.objects.filter(idproyecto=idproyecto, estado=1)
             .select_related("idicono")
             .only(
                 "idiconoproyecto",
@@ -58,10 +62,10 @@ def list_iconos_proyecto(request, idproyecto):
         serializer = IconoProyectoSerializer(iconos, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def add_iconos_proyecto(request):
@@ -86,4 +90,3 @@ def add_iconos_proyecto(request):
     # 👇 Esto hará que veas el detalle exacto del error
     print("Errores serializer:", serializer.errors)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-

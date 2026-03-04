@@ -1,5 +1,6 @@
 from rest_framework.permissions import BasePermission
-from ..models import Inmobiliaria, Proyecto
+from api.models import Inmobiliaria, Proyecto
+
 
 class IsOwnerOfLote(BasePermission):
     def has_object_permission(self, request, view, obj):
@@ -8,12 +9,14 @@ class IsOwnerOfLote(BasePermission):
         except AttributeError:
             return False
 
+
 class IsSameInmobiliaria(BasePermission):
     def has_object_permission(self, request, view, obj):
         try:
             return obj.idproyecto.idinmobiliaria_id == request.user.idinmobiliaria_id
         except AttributeError:
             return False
+
 
 class IsOwnerOfProyecto(BasePermission):
     def has_object_permission(self, request, view, obj):
@@ -25,12 +28,16 @@ class IsOwnerOfProyecto(BasePermission):
 
 class IsSelfUser(BasePermission):
     def has_object_permission(self, request, view, obj):
-        return getattr(request.user, "idusuario", None) == getattr(obj, "idusuario", None)
+        return getattr(request.user, "idusuario", None) == getattr(
+            obj, "idusuario", None
+        )
 
 
 class IsOwnerOfInmobiliaria(BasePermission):
     def has_object_permission(self, request, view, obj):
-        return getattr(obj, "idusuario_id", None) == getattr(request.user, "idusuario", None)
+        return getattr(obj, "idusuario_id", None) == getattr(
+            request.user, "idusuario", None
+        )
 
 
 class IsSuperUser(BasePermission):
@@ -51,4 +58,6 @@ def is_project_owned_by_user(project_id, user):
     owner_inmo_id = user_inmobiliaria_id(user)
     if not owner_inmo_id:
         return False
-    return Proyecto.objects.filter(idproyecto=project_id, idinmobiliaria=owner_inmo_id).exists()
+    return Proyecto.objects.filter(
+        idproyecto=project_id, idinmobiliaria=owner_inmo_id
+    ).exists()
