@@ -1,5 +1,4 @@
 from django.contrib.auth.hashers import check_password, make_password
-from django.contrib.auth import authenticate
 from django.db import transaction
 from django.contrib.auth.password_validation import validate_password
 import json
@@ -255,12 +254,23 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField()
 
     def validate(self, data):
-        correo = data.get("correo")
-        password = data.get("password")
-        request = self.context.get("request")
-        usuario = authenticate(request=request, username=correo, password=password)
+        correo = (data.get("correo") or "").strip().lower()
+        password = data.get("password") or ""
+
+        usuario = Usuario.objects.filter(correo__iexact=correo).first()
         if not usuario:
             raise serializers.ValidationError("Credenciales inválidas")
+
+        # Compatibilidad con hashes Django y migración de registros legacy en texto plano.
+        password_ok = check_password(password, usuario.password)
+        if not password_ok and usuario.password == password:
+            usuario.set_password(password)
+            usuario.save(update_fields=["password"])
+            password_ok = True
+
+        if not password_ok:
+            raise serializers.ValidationError("Credenciales inválidas")
+
         if not getattr(usuario, "is_active", True) or getattr(usuario, "estado", 0) != 1:
             raise serializers.ValidationError("Usuario inactivo")
 
