@@ -1,4 +1,5 @@
 import json
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Prefetch
 from rest_framework import status
@@ -12,7 +13,8 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from api.authentication import CustomJWTAuthentication
-from api.models import Imagenes, Lote, Proyecto, Puntos
+from api.audit import log_audit_event
+from api.models import Imagenes, Lote, Proyecto, Puntos, PuntosProyecto
 from api.security_uploads import build_secure_image_name, validate_uploaded_image
 from api.serializers import (
     ImagenesSerializer,
@@ -22,6 +24,7 @@ from api.serializers import (
 )
 from api.views.permissions import IsOwnerOfLote, IsSameInmobiliaria
 from api.views.permissions import is_project_owned_by_user, user_inmobiliaria_id
+from api.validation_utils import parse_polygon_points, polygon_area_m2
 
 
 def _parse_json_list(value):
@@ -31,6 +34,37 @@ def _parse_json_list(value):
         except json.JSONDecodeError:
             return []
     return value if isinstance(value, list) else []
+
+
+def _ensure_activated_user(request):
+    if not getattr(request.user, "is_active", False) or getattr(request.user, "estado", 0) != 1:
+        return Response(
+            {"error": "Primero debes activar tu cuenta para poder crear lotes o proyectos."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
+def _validate_lote_points(raw_points):
+    points = parse_polygon_points(raw_points)
+    if len(points) < 3:
+        return None, Response(
+            {"puntos": ["El lote/inmueble debe tener al menos 3 puntos válidos."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    max_area_m2 = float(getattr(settings, "LOTE_MAX_POLYGON_AREA_M2", 500000))
+    area_m2 = polygon_area_m2(points)
+    if area_m2 <= 0:
+        return None, Response(
+            {"puntos": ["No se pudo calcular un polígono válido para el lote."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if area_m2 > max_area_m2:
+        return None, Response(
+            {"puntos": ["El área del lote excede el límite permitido."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return points, None
 
 
 # Nuevo
@@ -106,6 +140,10 @@ def getLote(request, idproyecto):
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def registerLote(request):
+    blocked = _ensure_activated_user(request)
+    if blocked:
+        return blocked
+
     if request.method == "POST":
         project_id = request.data.get("idproyecto")
         if not project_id or not is_project_owned_by_user(project_id, request.user):
@@ -113,9 +151,25 @@ def registerLote(request):
                 {"error": "No tienes permisos para crear lotes en este proyecto."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        if not PuntosProyecto.objects.filter(idproyecto=project_id).exists():
+            return Response(
+                {"error": "El proyecto debe tener puntos definidos antes de crear lotes."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        idtipoinmobiliaria = request.data.get("idtipoinmobiliaria")
+        if not idtipoinmobiliaria:
+            return Response(
+                {"idtipoinmobiliaria": ["El tipo de inmobiliaria es obligatorio."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        puntos_data_raw = _parse_json_list(request.data.get("puntos", []))
+        puntos_data, puntos_error = _validate_lote_points(puntos_data_raw)
+        if puntos_error:
+            return puntos_error
 
         data = {
-            "idtipoinmobiliaria": request.data.get("idtipoinmobiliaria", 1),
+            "idtipoinmobiliaria": idtipoinmobiliaria,
             "idproyecto": request.data.get("idproyecto"),
             "nombre": request.data.get("nombre"),
             "latitud": request.data.get("latitud"),
@@ -148,7 +202,6 @@ def registerLote(request):
             lote = serializer.save()
             last_id = lote.idlote
 
-            puntos_data = _parse_json_list(request.data.get("puntos", []))
             puntos_bulk = []
             for idx, punto in enumerate(puntos_data):
                 lat = punto.get("latitud", punto.get("lat"))
@@ -193,6 +246,15 @@ def registerLote(request):
                     imagen_serializer.save()
                     nuevas_imagenes.append(imagen_serializer.data)
 
+            log_audit_event(
+                request,
+                "lote_create",
+                status_code=status.HTTP_201_CREATED,
+                success=True,
+                target_resource="lote",
+                target_id=lote.idlote,
+                detail={"puntos": len(puntos_bulk), "imagenes": len(nuevas_imagenes)},
+            )
             return Response(
                 {
                     "lote": serializer.data,
@@ -240,19 +302,19 @@ def updateLote(request, idlote):
 
             # Actualizar puntos
             puntos_raw = _parse_json_list(request.data.get("puntos", []))
-            if puntos_raw:
+            if "puntos" in request.data:
+                puntos_valid, puntos_error = _validate_lote_points(puntos_raw)
+                if puntos_error:
+                    transaction.set_rollback(True)
+                    return puntos_error
                 lote.puntos_set.all().delete()
                 puntos_bulk = []
-                for idx, p in enumerate(puntos_raw):
-                    lat = p.get("latitud", p.get("lat"))
-                    lng = p.get("longitud", p.get("lng"))
-                    if lat is None or lng is None:
-                        continue
+                for idx, p in enumerate(puntos_valid):
                     puntos_bulk.append(
                         Puntos(
                             idlote=lote,
-                            latitud=lat,
-                            longitud=lng,
+                            latitud=p["latitud"],
+                            longitud=p["longitud"],
                             estado=1,
                             orden=idx + 1,
                         )
@@ -288,6 +350,15 @@ def updateLote(request, idlote):
                     img.save()
                     nuevas_imagenes.append(img.data)
 
+        log_audit_event(
+            request,
+            "lote_update",
+            status_code=status.HTTP_200_OK,
+            success=True,
+            target_resource="lote",
+            target_id=idlote,
+            detail={"puntos": len(puntos_bulk), "imagenes": len(nuevas_imagenes)},
+        )
         return Response(
             {
                 "message": "Lote actualizado correctamente",
@@ -339,6 +410,15 @@ def updateLoteVendido(request, idlote):
         lote.vendido = vendido
         lote.save(update_fields=["vendido"])
 
+        log_audit_event(
+            request,
+            "lote_update_vendido",
+            status_code=status.HTTP_200_OK,
+            success=True,
+            target_resource="lote",
+            target_id=idlote,
+            detail={"vendido": vendido},
+        )
         return Response(
             {
                 "message": "Estado de venta actualizado",
@@ -410,6 +490,18 @@ def deleteLote(request, idlote):
             imagenes_borradas = Imagenes.objects.filter(idlote=idlote).delete()
             lote.delete()
 
+        log_audit_event(
+            request,
+            "lote_delete",
+            status_code=status.HTTP_200_OK,
+            success=True,
+            target_resource="lote",
+            target_id=idlote,
+            detail={
+                "puntos_eliminados": puntos_borrados[0],
+                "imagenes_eliminadas": imagenes_borradas[0],
+            },
+        )
         return Response(
             {
                 "message": f"Lote {idlote} y sus relaciones fueron eliminados correctamente.",
@@ -432,6 +524,10 @@ def deleteLote(request, idlote):
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def registerLotesMasivo(request):
+    blocked = _ensure_activated_user(request)
+    if blocked:
+        return blocked
+
     try:
         # Extraer lotes del FormData
         lotes = []
@@ -471,7 +567,7 @@ def registerLotesMasivo(request):
 
                     # Preparar datos para Lote
                     data_lote = {
-                        "idtipoinmobiliaria": lote_data.get("idtipoinmobiliaria", 1),
+                        "idtipoinmobiliaria": lote_data.get("idtipoinmobiliaria"),
                         "idproyecto": lote_data.get("idproyecto"),
                         "nombre": lote_data.get("nombre"),
                         "latitud": lat,
@@ -513,18 +609,47 @@ def registerLotesMasivo(request):
                                 }
                             )
                             continue
+                        if not data_lote.get("idtipoinmobiliaria"):
+                            errores.append(
+                                {
+                                    "indice": idx,
+                                    "nombre": lote_data.get("nombre", f"Lote {idx}"),
+                                    "error": "idtipoinmobiliaria es obligatorio",
+                                }
+                            )
+                            continue
+                        if not PuntosProyecto.objects.filter(idproyecto=project_id).exists():
+                            errores.append(
+                                {
+                                    "indice": idx,
+                                    "nombre": lote_data.get("nombre", f"Lote {idx}"),
+                                    "error": "Proyecto sin puntos definidos",
+                                }
+                            )
+                            continue
+                        puntos_valid, puntos_error = _validate_lote_points(puntos_data)
+                        if puntos_error:
+                            errores.append(
+                                {
+                                    "indice": idx,
+                                    "nombre": lote_data.get("nombre", f"Lote {idx}"),
+                                    "error": "Puntos inválidos o insuficientes",
+                                }
+                            )
+                            continue
 
                         lote = serializer.save()
 
                         # Guardar puntos
                         puntos_bulk = []
-                        for punto in puntos_data:
-                            lat = punto.get("lat") or punto.get("latitud")
-                            lng = punto.get("lng") or punto.get("longitud")
-                            if lat is None or lng is None:
-                                continue
+                        for punto in puntos_valid:
                             puntos_bulk.append(
-                                Puntos(idlote=lote, latitud=lat, longitud=lng, estado=1)
+                                Puntos(
+                                    idlote=lote,
+                                    latitud=punto["latitud"],
+                                    longitud=punto["longitud"],
+                                    estado=1,
+                                )
                             )
                         if puntos_bulk:
                             Puntos.objects.bulk_create(puntos_bulk, batch_size=500)
@@ -585,6 +710,18 @@ def registerLotesMasivo(request):
             status.HTTP_201_CREATED
             if len(lotes_creados) > 0
             else status.HTTP_400_BAD_REQUEST
+        )
+        log_audit_event(
+            request,
+            "lote_register_masivo",
+            status_code=status_code,
+            success=len(lotes_creados) > 0,
+            target_resource="lote",
+            detail={
+                "total_recibidos": len(lotes),
+                "total_creados": len(lotes_creados),
+                "total_errores": len(errores),
+            },
         )
         return Response(response_data, status=status_code)
 

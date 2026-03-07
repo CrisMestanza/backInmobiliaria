@@ -233,6 +233,25 @@ class PasswordResetCode(models.Model):
         managed = True
         db_table = "password_reset_code"
 
+
+class AccountActivationToken(models.Model):
+    idactivationtoken = models.AutoField(primary_key=True)
+    idusuario = models.ForeignKey(
+        Usuario,
+        models.DO_NOTHING,
+        db_column="idusuario",
+        related_name="activation_tokens",
+    )
+    token_hash = models.CharField(max_length=128, unique=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    request_ip = models.CharField(max_length=80, blank=True, null=True)
+
+    class Meta:
+        managed = True
+        db_table = "account_activation_token"
+
 class ClicksContactos(models.Model):
     idclicksContactos = models.AutoField(primary_key=True)
     idproyecto = models.ForeignKey(
@@ -267,3 +286,30 @@ class ClickProyectos(models.Model):
     class Meta:
         managed = False
         db_table = 'clickproyectos'
+
+
+class ApiAuditLog(models.Model):
+    idauditlog = models.AutoField(primary_key=True)
+    event_type = models.CharField(max_length=80)
+    method = models.CharField(max_length=10, blank=True, null=True)
+    path = models.CharField(max_length=255, blank=True, null=True)
+    status_code = models.IntegerField(blank=True, null=True)
+    success = models.BooleanField(default=True)
+    ip = models.CharField(max_length=80, blank=True, null=True)
+    user_agent = models.CharField(max_length=255, blank=True, null=True)
+    idusuario = models.ForeignKey(
+        Usuario,
+        models.DO_NOTHING,
+        db_column="idusuario",
+        blank=True,
+        null=True,
+    )
+    actor_email = models.CharField(max_length=255, blank=True, null=True)
+    target_resource = models.CharField(max_length=80, blank=True, null=True)
+    target_id = models.CharField(max_length=80, blank=True, null=True)
+    detail = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = True
+        db_table = "api_audit_log"

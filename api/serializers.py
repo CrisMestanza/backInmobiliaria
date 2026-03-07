@@ -2,6 +2,7 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
 from django.contrib.auth.password_validation import validate_password
 import json
+import re
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -82,16 +83,48 @@ class UsuarioSerializer(serializers.ModelSerializer):
         validate_password(value)
         return value
 
+    def validate_correo(self, value):
+        correo = (value or "").strip().lower()
+        if not correo:
+            raise serializers.ValidationError("El correo es obligatorio.")
+        qs = Usuario.objects.filter(correo__iexact=correo)
+        if self.instance is not None:
+            qs = qs.exclude(idusuario=self.instance.idusuario)
+        if qs.exists():
+            raise serializers.ValidationError("Este correo ya está registrado.")
+        return correo
+
+    def validate_nombre(self, value):
+        nombre = (value or "").strip()
+        if len(nombre) < 5:
+            raise serializers.ValidationError("Ingresa tu nombre completo real.")
+        parts = re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]{2,}", nombre)
+        if len(parts) < 2:
+            raise serializers.ValidationError("Debes ingresar al menos nombre y apellido.")
+        return nombre
+
     def create(self, validated_data):
         password = validated_data.pop("password", None)
         user = Usuario(**validated_data)
         user.is_staff = False
         user.is_superuser = False
-        user.estado = 1
+        user.is_active = False
+        user.estado = 0
         if password:
             user.password = password if str(password).startswith("pbkdf2_") else make_password(password)
         user.save()
         return user
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop("password", None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.password = (
+                password if str(password).startswith("pbkdf2_") else make_password(password)
+            )
+        instance.save()
+        return instance
 
 class ClickProyectosSerializer(serializers.ModelSerializer):
     class Meta:
@@ -232,10 +265,10 @@ class InmobiliariaRegistroSerializer(serializers.ModelSerializer):
             "correo": usuario_data.get("correo"),
             "nombre": usuario_data.get("nombre"),
             "password": usuario_data.get("password"),
-            "estado": 1,
+            "estado": 0,
             "is_staff": False,
             "is_superuser": False,
-            "is_active": True,
+            "is_active": False,
         }
 
         if not safe_usuario_data["correo"] or not safe_usuario_data["password"]:
@@ -272,7 +305,9 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError("Credenciales inválidas")
 
         if not getattr(usuario, "is_active", True) or getattr(usuario, "estado", 0) != 1:
-            raise serializers.ValidationError("Usuario inactivo")
+            raise serializers.ValidationError(
+                "Primero debes activar tu cuenta para poder entrar al dashboard."
+            )
 
         data["usuario"] = usuario
         return data

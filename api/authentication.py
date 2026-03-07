@@ -29,6 +29,11 @@ class CustomJWTAuthentication(JWTAuthentication):
     def get_user(self, validated_token):
         try:
             user_id = validated_token.get("user_id")
-            return Usuario.objects.get(idusuario=user_id)
+            user = Usuario.objects.get(idusuario=user_id)
+            if not getattr(user, "is_active", False) or getattr(user, "estado", 0) != 1:
+                raise AuthenticationFailed(
+                    "Primero debes activar tu cuenta para poder crear lotes o proyectos."
+                )
+            return user
         except Usuario.DoesNotExist:
             raise InvalidToken("Usuario no encontrado")

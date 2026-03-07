@@ -1,5 +1,6 @@
 import json
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Prefetch
 from rest_framework import status
@@ -12,6 +13,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from api.authentication import CustomJWTAuthentication
+from api.audit import log_audit_event
 from api.models import (
     ClickProyectos,
     ClicksContactos,
@@ -31,6 +33,7 @@ from api.serializers import (
 )
 from api.views.permissions import IsOwnerOfProyecto, user_inmobiliaria_id
 from api.security_uploads import build_secure_image_name, validate_uploaded_image
+from api.validation_utils import parse_polygon_points, polygon_area_m2
 
 PROYECTO_MAP_ONLY_FIELDS = (
     "idproyecto",
@@ -59,6 +62,15 @@ PROYECTO_MAP_ONLY_FIELDS = (
 )
 
 
+def _ensure_activated_user(request):
+    if not getattr(request.user, "is_active", False) or getattr(request.user, "estado", 0) != 1:
+        return Response(
+            {"error": "Primero debes activar tu cuenta para poder crear lotes o proyectos."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
 def _parse_json_list(value):
     if isinstance(value, str):
         try:
@@ -68,11 +80,38 @@ def _parse_json_list(value):
     return value if isinstance(value, list) else []
 
 
+def _validate_project_points(puntos_data):
+    points = parse_polygon_points(puntos_data)
+    if len(points) < 3:
+        return None, Response(
+            {"puntos": ["El proyecto debe tener al menos 3 puntos válidos."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    max_area_m2 = float(getattr(settings, "PROJECT_MAX_POLYGON_AREA_M2", 5000000))
+    area_m2 = polygon_area_m2(points)
+    if area_m2 <= 0:
+        return None, Response(
+            {"puntos": ["No se pudo calcular un polígono válido para el proyecto."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if area_m2 > max_area_m2:
+        return None, Response(
+            {
+                "puntos": [
+                    "El área del proyecto excede el límite permitido. Ajusta el trazado."
+                ]
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return points, None
+
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def listProyectos(_request):
     proyectos = (
-        Proyecto.objects.filter(estado=1)
+        Proyecto.objects.filter(estado=1, puntos__isnull=False)
+        .distinct()
         .only(*PROYECTO_MAP_ONLY_FIELDS)
         .prefetch_related(
             Prefetch(
@@ -97,6 +136,10 @@ def listProyectos(_request):
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def registerProyecto(request):
+    blocked = _ensure_activated_user(request)
+    if blocked:
+        return blocked
+
     inmobiliaria_usuario = (
         Inmobiliaria.objects.filter(idusuario=request.user)
         .only("idinmobiliaria")
@@ -108,13 +151,25 @@ def registerProyecto(request):
             status=status.HTTP_403_FORBIDDEN,
         )
 
+    idtipoinmobiliaria = request.data.get("idtipoinmobiliaria")
+    if not idtipoinmobiliaria:
+        return Response(
+            {"idtipoinmobiliaria": ["El tipo de inmobiliaria es obligatorio."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    puntos_data_raw = _parse_json_list(request.data.get("puntos", []))
+    puntos_data, puntos_error = _validate_project_points(puntos_data_raw)
+    if puntos_error:
+        return puntos_error
+
     data = {
         "nombreproyecto": request.data.get("nombreproyecto"),
         "longitud": request.data.get("longitud"),
         "latitud": request.data.get("latitud"),
         "idinmobiliaria": inmobiliaria_usuario.idinmobiliaria,
         "descripcion": request.data.get("descripcion"),
-        "idtipoinmobiliaria": request.data.get("idtipoinmobiliaria"),
+        "idtipoinmobiliaria": idtipoinmobiliaria,
         "estado": 1,
         "dormitorios": request.data.get("dormitorios", 0),
         "banos": request.data.get("banos", 0),
@@ -136,8 +191,6 @@ def registerProyecto(request):
     serializer = ProyectoSerializer(data=data)
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    puntos_data = _parse_json_list(request.data.get("puntos", []))
 
     with transaction.atomic():
         proyecto = serializer.save()
@@ -179,6 +232,15 @@ def registerProyecto(request):
                 }
             )
 
+    log_audit_event(
+        request,
+        "proyecto_create",
+        status_code=status.HTTP_201_CREATED,
+        success=True,
+        target_resource="proyecto",
+        target_id=proyecto.idproyecto,
+        detail={"puntos": len(puntos_bulk), "imagenes": len(nuevas_imagenes)},
+    )
     return Response(
         {
             "proyecto": serializer.data,
@@ -270,9 +332,43 @@ def updateProyecto(request, idproyecto):
             status=status.HTTP_403_FORBIDDEN,
         )
 
+    if "idtipoinmobiliaria" in request.data and not request.data.get("idtipoinmobiliaria"):
+        return Response(
+            {"idtipoinmobiliaria": ["El tipo de inmobiliaria es obligatorio."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     serializer = ProyectoSerializer(proyecto, data=request.data, partial=True)
     if serializer.is_valid():
-        serializer.save()
+        with transaction.atomic():
+            serializer.save()
+            if "puntos" in request.data:
+                puntos_data_raw = _parse_json_list(request.data.get("puntos", []))
+                puntos_data, puntos_error = _validate_project_points(puntos_data_raw)
+                if puntos_error:
+                    transaction.set_rollback(True)
+                    return puntos_error
+                PuntosProyecto.objects.filter(idproyecto=proyecto.idproyecto).delete()
+                PuntosProyecto.objects.bulk_create(
+                    [
+                        PuntosProyecto(
+                            idproyecto=proyecto,
+                            latitud=p["latitud"],
+                            longitud=p["longitud"],
+                            orden=idx + 1,
+                        )
+                        for idx, p in enumerate(puntos_data)
+                    ],
+                    batch_size=500,
+                )
+        log_audit_event(
+            request,
+            "proyecto_update",
+            status_code=status.HTTP_200_OK,
+            success=True,
+            target_resource="proyecto",
+            target_id=idproyecto,
+        )
         return Response(serializer.data, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -314,12 +410,29 @@ def deleteProyecto(request, idproyecto):
             PuntosProyecto.objects.filter(idproyecto=idproyecto).delete()
             proyecto.delete()
 
+        log_audit_event(
+            request,
+            "proyecto_delete",
+            status_code=status.HTTP_200_OK,
+            success=True,
+            target_resource="proyecto",
+            target_id=idproyecto,
+        )
         return Response(
             {"message": "Proyecto y todas sus relaciones eliminadas correctamente."},
             status=status.HTTP_200_OK,
         )
 
     except Exception as e:
+        log_audit_event(
+            request,
+            "proyecto_delete_failed",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            success=False,
+            target_resource="proyecto",
+            target_id=idproyecto,
+            detail=str(e),
+        )
         return Response(
             {"error": f"Ocurrió un error al eliminar el proyecto: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -330,7 +443,12 @@ def deleteProyecto(request, idproyecto):
 @permission_classes([AllowAny])
 def tipoProyecto(_request, idtipoinmobiliaria):
     tipo = (
-        Proyecto.objects.filter(estado=1, idtipoinmobiliaria=idtipoinmobiliaria)
+        Proyecto.objects.filter(
+            estado=1,
+            idtipoinmobiliaria=idtipoinmobiliaria,
+            puntos__isnull=False,
+        )
+        .distinct()
         .only(*PROYECTO_MAP_ONLY_FIELDS)
         .prefetch_related(
             Prefetch(
@@ -354,7 +472,11 @@ def tipoProyecto(_request, idtipoinmobiliaria):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def listProyectosInmobiliaria(_request, idinmobiliaria):
-    proyectos = Proyecto.objects.filter(idinmobiliaria=idinmobiliaria, estado=1)
+    proyectos = Proyecto.objects.filter(
+        idinmobiliaria=idinmobiliaria,
+        estado=1,
+        puntos__isnull=False,
+    ).distinct()
     serializer = ProyectoSerializer(proyectos, many=True)
     return Response(serializer.data)
 
@@ -367,7 +489,8 @@ def proyectos_filtrados(request):
     inmo = request.GET.get("inmo")  # opcional
 
     proyectos = (
-        Proyecto.objects.filter(estado=1)
+        Proyecto.objects.filter(estado=1, puntos__isnull=False)
+        .distinct()
         .only(*PROYECTO_MAP_ONLY_FIELDS)
         .prefetch_related(
             Prefetch(

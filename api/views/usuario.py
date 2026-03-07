@@ -1,12 +1,15 @@
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.hashers import check_password, make_password
+from django.core.exceptions import ValidationError
 from django.core.mail import EmailMultiAlternatives
 from django.db import transaction
 from django.utils import timezone
 from django.utils.html import strip_tags
 from datetime import timedelta
+from urllib.parse import urlencode
 import json
+import hashlib
 import secrets
 import re
 import logging
@@ -25,8 +28,10 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from api.authentication import CustomJWTAuthentication
+from api.audit import log_audit_event
 from api.models import Inmobiliaria, Proyecto, Usuario
-from api.models import PasswordResetCode
+from api.models import PasswordResetCode, AccountActivationToken
+from api.request_utils import get_client_ip
 from api.serializers import (
     InmobiliariaSerializer,
     LoginSerializer,
@@ -34,6 +39,7 @@ from api.serializers import (
     UsuarioSerializer,
 )
 from api.throttling import (
+    ActivationResendRateThrottle,
     LoginRateThrottle,
     RefreshRateThrottle,
     RegisterRateThrottle,
@@ -41,14 +47,97 @@ from api.throttling import (
     RecoveryVerifyRateThrottle,
     RecoveryResetRateThrottle,
 )
+from api.validation_utils import (
+    inmobiliaria_phone_exists_normalized,
+    normalize_phone,
+)
 from api.views.permissions import IsSuperUser
 
 SECRET_KEY = settings.SECRET_KEY
 logger = logging.getLogger("api.recovery")
+auth_logger = logging.getLogger("api.audit")
+
+
+REAL_NAME_PART_RE = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]{2,}")
 
 
 def _generate_otp_code():
     return f"{secrets.randbelow(1000000):06d}"
+
+
+def _normalize_phone(value):
+    return normalize_phone(value)
+
+
+def _is_realistic_name(value):
+    name = (value or "").strip()
+    if len(name) < 5:
+        return False
+    return len(REAL_NAME_PART_RE.findall(name)) >= 2
+
+
+def _hash_activation_token(raw_token):
+    return hashlib.sha256(f"{raw_token}{SECRET_KEY}".encode("utf-8")).hexdigest()
+
+
+def _build_activation_link(user_id, raw_token):
+    base_url = getattr(
+        settings,
+        "ACCOUNT_ACTIVATION_FRONTEND_URL",
+        "https://www.geohabita.com/activar-cuenta",
+    ).rstrip("/")
+    return f"{base_url}?{urlencode({'uid': user_id, 'token': raw_token})}"
+
+
+def _send_activation_email(destinatario, nombre, activation_link):
+    subject = "GeoHabita - Activa tu cuenta"
+    html = f"""
+<div style="font-family: 'Segoe UI', Arial, sans-serif; background:#f6f8f7; padding:24px;">
+  <div style="max-width:600px; margin:0 auto; background:#ffffff; border-radius:12px; border:1px solid #e2e8f0; overflow:hidden;">
+    <div style="padding:24px; background:linear-gradient(135deg,#17a16e,#119b67); color:#fff;">
+      <h1 style="margin:0; font-size:24px;">Activa tu cuenta</h1>
+    </div>
+    <div style="padding:24px;">
+      <p style="color:#1e293b; margin:0 0 12px 0;">Hola {nombre},</p>
+      <p style="color:#475569; margin:0 0 18px 0;">
+        Tu cuenta fue creada correctamente. Para activarla y entrar al dashboard, confirma tu correo.
+      </p>
+      <a href="{activation_link}" style="display:inline-block; background:#17a16e; color:#fff; text-decoration:none; padding:12px 20px; border-radius:8px; font-weight:700;">
+        Activar mi cuenta
+      </a>
+      <p style="color:#94a3b8; margin:18px 0 0 0; font-size:12px;">
+        Si no solicitaste esta cuenta, ignora este correo.
+      </p>
+    </div>
+  </div>
+</div>
+"""
+    text = strip_tags(html)
+    msg = EmailMultiAlternatives(
+        subject=subject,
+        body=text,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[destinatario],
+    )
+    msg.attach_alternative(html, "text/html")
+    msg.send(fail_silently=False)
+
+
+def _create_activation_token(usuario, request):
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = _hash_activation_token(raw_token)
+    ttl_hours = int(getattr(settings, "ACCOUNT_ACTIVATION_TTL_HOURS", 24))
+    AccountActivationToken.objects.filter(
+        idusuario=usuario,
+        used_at__isnull=True,
+    ).update(used_at=timezone.now())
+    AccountActivationToken.objects.create(
+        idusuario=usuario,
+        token_hash=token_hash,
+        expires_at=timezone.now() + timedelta(hours=ttl_hours),
+        request_ip=get_client_ip(request),
+    )
+    return raw_token
 
 
 def _build_recovery_profile(usuario):
@@ -210,16 +299,66 @@ def listUsuarios(request):
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated, IsSuperUser])
 def registerUsuario(request):
+    client_ip = get_client_ip(request)
     data = {
         "correo": request.data.get("correo"),
         "password": request.data.get("password"),
         "nombre": request.data.get("nombre"),
-        "estado": 1,
+        "estado": 0,
     }
+    if not _is_realistic_name(data.get("nombre")):
+        return Response(
+            {"nombre": ["Debes ingresar al menos nombre y apellido reales."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     serializer = UsuarioSerializer(data=data)
     if serializer.is_valid():
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        usuario_instance = serializer.save()
+        if not isinstance(usuario_instance, Usuario):
+            return Response(
+                {"message": "No se pudo crear el usuario."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        usuario = usuario_instance
+        raw_token = _create_activation_token(usuario, request)
+        activation_link = _build_activation_link(usuario.idusuario, raw_token)
+        try:
+            _send_activation_email(usuario.correo, usuario.nombre or "usuario", activation_link)
+        except Exception:
+            logger.exception(
+                "activation_email_error usuario_id=%s correo=%s ip=%s",
+                usuario.idusuario,
+                usuario.correo,
+                client_ip,
+            )
+            return Response(
+                {"message": "Cuenta creada, pero no se pudo enviar el correo de activación."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        auth_logger.info(
+            "register_usuario_pending_activation usuario_id=%s correo=%s ip=%s",
+            usuario.idusuario,
+            usuario.correo,
+            client_ip,
+        )
+        log_audit_event(
+            request,
+            "user_register_pending_activation",
+            status_code=status.HTTP_201_CREATED,
+            success=True,
+            target_resource="usuario",
+            target_id=usuario.idusuario,
+            detail={"correo": usuario.correo},
+        )
+        return Response(
+            {
+                "message": (
+                    f'Tu cuenta ha sido creada, por favor confirma la activación que te llegó al correo: "{usuario.correo}".'
+                ),
+                "activation_required": True,
+            },
+            status=status.HTTP_201_CREATED,
+        )
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -288,6 +427,14 @@ def updateUsuario(request, idusuario):
     serializer = UsuarioSerializer(usuario, data=payload, partial=True)
     if serializer.is_valid():
         serializer.save()
+        log_audit_event(
+            request,
+            "user_update",
+            status_code=status.HTTP_200_OK,
+            success=True,
+            target_resource="usuario",
+            target_id=idusuario,
+        )
         return Response(serializer.data, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -310,6 +457,14 @@ def deleteUsuario(request, idusuario):
 
     usuario.estado = 0
     usuario.save(update_fields=["estado"])
+    log_audit_event(
+        request,
+        "user_soft_delete",
+        status_code=status.HTTP_200_OK,
+        success=True,
+        target_resource="usuario",
+        target_id=idusuario,
+    )
     return Response(
         {"message": "Usuario desactivado correctamente"}, status=status.HTTP_200_OK
     )
@@ -319,6 +474,7 @@ def deleteUsuario(request, idusuario):
 @permission_classes([AllowAny])
 @throttle_classes([RegisterRateThrottle])
 def register_inmobiliaria_usuario(request):
+    client_ip = get_client_ip(request)
     usuario_payload = request.data.get("usuario")
     if isinstance(usuario_payload, str):
         try:
@@ -340,35 +496,105 @@ def register_inmobiliaria_usuario(request):
         "correo": usuario_payload.get("correo") or request.data.get("correo"),
         "password": usuario_payload.get("password") or request.data.get("password"),
         "nombre": usuario_payload.get("nombre") or request.data.get("nombre"),
-        "estado": 1,
+        "estado": 0,
     }
+    if not _is_realistic_name(usuario_data.get("nombre")):
+        return Response(
+            {"usuario": {"nombre": ["Debes ingresar al menos nombre y apellido reales."]}},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    telefono = (request.data.get("telefono") or "").strip()
+    telefono_digits = _normalize_phone(telefono)
+    if not telefono:
+        return Response(
+            {"telefono": ["El número de teléfono es obligatorio."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if len(telefono_digits) < 7 or len(telefono_digits) > 15:
+        return Response(
+            {"telefono": ["El número de teléfono no es válido."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if inmobiliaria_phone_exists_normalized(telefono_digits):
+        return Response(
+            {"telefono": ["Este número ya está registrado."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    inmo_correo = (request.data.get("correo") or "").strip().lower()
+    if not inmo_correo:
+        return Response(
+            {"correo": ["El correo de contacto de la inmobiliaria es obligatorio."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if Inmobiliaria.objects.filter(correo__iexact=inmo_correo).exists():
+        return Response(
+            {"correo": ["Este correo de contacto ya está registrado."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     usuario_serializer = UsuarioSerializer(data=usuario_data)
     if not usuario_serializer.is_valid():
         return Response(usuario_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     with transaction.atomic():
-        usuario = usuario_serializer.save()
+        usuario_instance = usuario_serializer.save()
+        if not isinstance(usuario_instance, Usuario):
+            return Response(
+                {"usuario": ["No se pudo crear el usuario."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        usuario = usuario_instance
         inmobiliaria_data = {
             "nombreinmobiliaria": request.data.get("nombreinmobiliaria"),
             "facebook": request.data.get("facebook"),
             "whatsapp": request.data.get("whatsapp"),
+            "tiktok": request.data.get("tiktok"),
             "pagina": request.data.get("pagina"),
-            "estado": 1,
+            "estado": 0,
             "idusuario": usuario.idusuario,
             "descripcion": request.data.get("descripcion"),
-            "telefono": request.data.get("telefono"),
-            "correo": request.data.get("correo"),
+            "telefono": telefono,
+            "correo": inmo_correo,
         }
         inmo_serializer = InmobiliariaSerializer(data=inmobiliaria_data)
         if not inmo_serializer.is_valid():
             transaction.set_rollback(True)
             return Response(inmo_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         inmo_serializer.save()
+        raw_token = _create_activation_token(usuario, request)
+
+    activation_link = _build_activation_link(usuario.idusuario, raw_token)
+    try:
+        _send_activation_email(usuario.correo, usuario.nombre or "usuario", activation_link)
+    except Exception:
+        logger.exception(
+            "activation_email_error usuario_id=%s correo=%s ip=%s",
+            usuario.idusuario,
+            usuario.correo,
+            client_ip,
+        )
+        return Response(
+            {"message": "Cuenta creada, pero no se pudo enviar el correo de activación."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    log_audit_event(
+        request,
+        "inmobiliaria_usuario_register_pending_activation",
+        status_code=status.HTTP_201_CREATED,
+        success=True,
+        target_resource="usuario",
+        target_id=usuario.idusuario,
+        detail={"correo": usuario.correo},
+    )
 
     return Response(
         {
-            "usuario": UsuarioSerializer(usuario).data,
-            "inmobiliaria": inmo_serializer.data,
+            "message": (
+                f'Tu cuenta ha sido creada, por favor confirma la activación que te llegó al correo: "{usuario.correo}".'
+            ),
+            "activation_required": True,
         },
         status=status.HTTP_201_CREATED,
     )
@@ -376,10 +602,150 @@ def register_inmobiliaria_usuario(request):
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+def confirm_account_activation(request):
+    payload = _safe_payload(request)
+    user_id = payload.get("uid")
+    token = (payload.get("token") or "").strip()
+    client_ip = get_client_ip(request)
+
+    if not user_id or not token:
+        return Response(
+            {"message": "Enlace de activación inválido."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    usuario = Usuario.objects.filter(idusuario=user_id).first()
+    if not usuario:
+        return Response(
+            {"message": "Cuenta no encontrada."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if usuario.is_active and usuario.estado == 1:
+        return Response(
+            {"message": "Tu cuenta ya está activa."},
+            status=status.HTTP_200_OK,
+        )
+
+    token_hash = _hash_activation_token(token)
+    activation_entry = (
+        AccountActivationToken.objects.filter(
+            idusuario=usuario,
+            token_hash=token_hash,
+            used_at__isnull=True,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+    if not activation_entry:
+        return Response(
+            {"message": "El enlace de activación no es válido."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if activation_entry.expires_at < timezone.now():
+        return Response(
+            {"message": "El enlace de activación expiró. Solicita uno nuevo."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    usuario.is_active = True
+    usuario.estado = 1
+    usuario.save(update_fields=["is_active", "estado"])
+    activation_entry.used_at = timezone.now()
+    activation_entry.request_ip = client_ip
+    activation_entry.save(update_fields=["used_at", "request_ip"])
+    auth_logger.info(
+        "account_activated usuario_id=%s correo=%s ip=%s",
+        usuario.idusuario,
+        usuario.correo,
+        client_ip,
+    )
+    log_audit_event(
+        request,
+        "account_activation_confirmed",
+        status_code=status.HTTP_200_OK,
+        success=True,
+        target_resource="usuario",
+        target_id=usuario.idusuario,
+        detail={"correo": usuario.correo},
+    )
+    return Response(
+        {"message": "Cuenta activada correctamente. Ya puedes iniciar sesión."},
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([ActivationResendRateThrottle])
+def resend_account_activation(request):
+    correo = _read_email_payload(request)
+    client_ip = get_client_ip(request)
+    generic_ok = {
+        "message": "Si el correo está pendiente de activación, enviaremos un nuevo enlace."
+    }
+
+    if not correo:
+        return Response(
+            {"message": "El correo es obligatorio."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    usuario = Usuario.objects.filter(correo__iexact=correo).first()
+    if not usuario:
+        auth_logger.info("activation_resend_user_not_found correo=%s ip=%s", correo, client_ip)
+        return Response(generic_ok, status=status.HTTP_200_OK)
+
+    if usuario.is_active and usuario.estado == 1:
+        return Response(
+            {"message": "Tu cuenta ya está activa. Puedes iniciar sesión."},
+            status=status.HTTP_200_OK,
+        )
+
+    raw_token = _create_activation_token(usuario, request)
+    activation_link = _build_activation_link(usuario.idusuario, raw_token)
+
+    try:
+        _send_activation_email(usuario.correo, usuario.nombre or "usuario", activation_link)
+    except Exception:
+        logger.exception(
+            "activation_resend_email_error usuario_id=%s correo=%s ip=%s",
+            usuario.idusuario,
+            usuario.correo,
+            client_ip,
+        )
+        return Response(
+            {"message": "No se pudo enviar el correo en este momento."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    auth_logger.info(
+        "activation_resend_success usuario_id=%s correo=%s ip=%s",
+        usuario.idusuario,
+        usuario.correo,
+        client_ip,
+    )
+    log_audit_event(
+        request,
+        "account_activation_resent",
+        status_code=status.HTTP_200_OK,
+        success=True,
+        target_resource="usuario",
+        target_id=usuario.idusuario,
+        detail={"correo": usuario.correo},
+    )
+    return Response(generic_ok, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
 @throttle_classes([RecoveryRequestRateThrottle])
 def recovery_request_code(request):
     correo = _read_email_payload(request)
-    logger.info("recovery_request_received correo=%s ip=%s", correo, request.META.get("REMOTE_ADDR"))
+    client_ip = get_client_ip(request)
+    logger.info("recovery_request_received correo=%s ip=%s", correo, client_ip)
     generic_ok = {
         "message": "Si el correo está registrado, enviaremos un código de recuperación."
     }
@@ -423,7 +789,7 @@ def recovery_request_code(request):
         idusuario=usuario,
         codigo_hash=make_password(code),
         expires_at=now + timedelta(minutes=ttl_minutes),
-        request_ip=request.META.get("REMOTE_ADDR"),
+        request_ip=client_ip,
     )
     logger.info(
         "recovery_code_created usuario_id=%s correo=%s expires_minutes=%s",
@@ -452,7 +818,7 @@ def recovery_verify_code(request):
     payload = _safe_payload(request)
     correo = _read_email_payload(request)
     codigo = (payload.get("codigo") or "").strip()
-    logger.info("recovery_verify_received correo=%s ip=%s", correo, request.META.get("REMOTE_ADDR"))
+    logger.info("recovery_verify_received correo=%s ip=%s", correo, get_client_ip(request))
 
     if not correo or not codigo:
         return Response(
@@ -530,7 +896,7 @@ def recovery_reset_password(request):
     correo = _read_email_payload(request)
     reset_token = (payload.get("reset_token") or "").strip()
     password = payload.get("password") or ""
-    logger.info("recovery_reset_received correo=%s ip=%s", correo, request.META.get("REMOTE_ADDR"))
+    logger.info("recovery_reset_received correo=%s ip=%s", correo, get_client_ip(request))
 
     if not correo or not reset_token or not password:
         return Response(
@@ -566,8 +932,8 @@ def recovery_reset_password(request):
 
     try:
         validate_password(password, user=usuario)
-    except Exception as exc:
-        detail = exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+    except ValidationError as exc:
+        detail = exc.messages[0] if exc.messages else str(exc)
         return Response({"message": detail}, status=status.HTTP_400_BAD_REQUEST)
 
     usuario.set_password(password)
@@ -588,13 +954,32 @@ def recovery_reset_password(request):
 @permission_classes([AllowAny])
 @throttle_classes([LoginRateThrottle])
 def login_usuario(request):
+    client_ip = get_client_ip(request)
+    auth_logger.info("login_attempt ip=%s", client_ip)
     serializer = LoginSerializer(data=request.data, context={"request": request})
     if serializer.is_valid():
-        usuario = serializer.validated_data["usuario"]
+        validated_data = serializer.validated_data or {}
+        if not isinstance(validated_data, dict):
+            validated_data = {}
+        usuario = validated_data.get("usuario")
+        if not isinstance(usuario, Usuario):
+            return Response(
+                {"detail": "Credenciales inválidas"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         refresh = RefreshToken.for_user(usuario)
         access = str(refresh.access_token)
 
         inmobiliaria = Inmobiliaria.objects.filter(idusuario=usuario).first()
+        log_audit_event(
+            request,
+            "login_success",
+            status_code=status.HTTP_200_OK,
+            success=True,
+            target_resource="usuario",
+            target_id=usuario.idusuario,
+            detail={"correo": usuario.correo},
+        )
 
         return Response(
             {
@@ -618,7 +1003,15 @@ def login_usuario(request):
             },
             status=status.HTTP_200_OK,
         )
-
+    auth_logger.info("login_failed ip=%s", client_ip)
+    log_audit_event(
+        request,
+        "login_failed",
+        status_code=status.HTTP_400_BAD_REQUEST,
+        success=False,
+        target_resource="usuario",
+        detail={"payload_keys": list((request.data or {}).keys()) if hasattr(request, "data") else []},
+    )
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -626,6 +1019,7 @@ def login_usuario(request):
 @permission_classes([AllowAny])
 @throttle_classes([RefreshRateThrottle])
 def refresh_token(request):
+    client_ip = get_client_ip(request)
     token = request.data.get("refresh")
     if not token:
         return Response(
@@ -656,10 +1050,27 @@ def refresh_token(request):
             except Exception:
                 pass
 
+        log_audit_event(
+            request,
+            "refresh_success",
+            status_code=status.HTTP_200_OK,
+            success=True,
+            target_resource="usuario",
+            target_id=user.idusuario,
+            detail={"correo": user.correo},
+        )
         return Response(
             {"access": str(new_refresh.access_token), "refresh": str(new_refresh)}
         )
     except TokenError:
+        auth_logger.info("refresh_failed ip=%s reason=token_error", client_ip)
+        log_audit_event(
+            request,
+            "refresh_failed",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            success=False,
+            target_resource="usuario",
+        )
         return Response(
             {"detail": "Token inválido"}, status=status.HTTP_401_UNAUTHORIZED
         )
@@ -702,6 +1113,15 @@ class CheckAuthView(APIView):
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def logout(request):
+    auth_logger.info("logout user_id=%s ip=%s", getattr(request.user, "idusuario", None), get_client_ip(request))
+    log_audit_event(
+        request,
+        "logout",
+        status_code=status.HTTP_200_OK,
+        success=True,
+        target_resource="usuario",
+        target_id=getattr(request.user, "idusuario", None),
+    )
     response = Response({"message": "Sesión cerrada"})
     response.delete_cookie("jwt")
     return response

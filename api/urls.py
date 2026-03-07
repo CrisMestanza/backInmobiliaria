@@ -66,6 +66,8 @@ urlpatterns = [
     path('recovery/request-code/', recovery_request_code),
     path('recovery/verify-code/', recovery_verify_code),
     path('recovery/reset-password/', recovery_reset_password),
+    path('activation/confirm/', confirm_account_activation),
+    path('activation/resend/', resend_account_activation),
     path('logout/', logout),
     
     #Iconos

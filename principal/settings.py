@@ -66,6 +66,7 @@ MIDDLEWARE = [
     'axes.middleware.AxesMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'api.middleware.RequestAuditLogMiddleware',
 ]
 
 ROOT_URLCONF = 'principal.urls'
@@ -140,6 +141,7 @@ REST_FRAMEWORK = {
         "recovery_request": _get_env("DRF_THROTTLE_RECOVERY_REQUEST", "5/hour"),
         "recovery_verify": _get_env("DRF_THROTTLE_RECOVERY_VERIFY", "15/hour"),
         "recovery_reset": _get_env("DRF_THROTTLE_RECOVERY_RESET", "8/hour"),
+        "activation_resend": _get_env("DRF_THROTTLE_ACTIVATION_RESEND", "5/hour"),
     },
 }
 
@@ -229,6 +231,12 @@ AUTH_PASSWORD_VALIDATORS = [
 RECOVERY_CODE_TTL_MINUTES = int(_get_env("RECOVERY_CODE_TTL_MINUTES", "10"))
 RECOVERY_CODE_MAX_ATTEMPTS = int(_get_env("RECOVERY_CODE_MAX_ATTEMPTS", "5"))
 RECOVERY_CODE_COOLDOWN_SECONDS = int(_get_env("RECOVERY_CODE_COOLDOWN_SECONDS", "60"))
+ACCOUNT_ACTIVATION_TTL_HOURS = int(_get_env("ACCOUNT_ACTIVATION_TTL_HOURS", "24"))
+ACCOUNT_ACTIVATION_FRONTEND_URL = _get_env(
+    "ACCOUNT_ACTIVATION_FRONTEND_URL",
+    "https://www.geohabita.com/activar-cuenta",
+)
+ACCOUNT_PENDING_DELETE_DAYS = int(_get_env("ACCOUNT_PENDING_DELETE_DAYS", "7"))
 
 EMAIL_BACKEND = _get_env("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
 EMAIL_HOST = _get_env("EMAIL_HOST", "")
@@ -264,6 +272,11 @@ LOGGING = {
             "handlers": ["console"],
             "level": "INFO",
             "propagate": False,
-        }
+        },
+        "api.audit": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
     },
 }

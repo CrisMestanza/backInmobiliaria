@@ -38,3 +38,7 @@ class RecoveryVerifyRateThrottle(BaseIPThrottle):
 
 class RecoveryResetRateThrottle(BaseIPThrottle):
     scope = "recovery_reset"
+
+
+class ActivationResendRateThrottle(BaseIPThrottle):
+    scope = "activation_resend"
