@@ -30,6 +30,8 @@ urlpatterns = [
     #imagen
     path('list_imagen/<int:idlote>', list_imagen),
     path('list_imagen_proyecto/<int:idproyecto>', list_imagen_proyecto),
+    path('delete_imagen/<int:idimagenes>/', delete_imagen),
+    path('delete_imagen_proyecto/<int:idimagenesp>/', delete_imagen_proyecto),
     
     #Lotes
     path('listLotes/', list_lotes),
@@ -46,6 +48,8 @@ urlpatterns = [
 
     #Proyectos
     path('listProyectos/', listProyectos),
+    path('mapa/proyectos/', list_proyectos_mapa),
+    path('mapa/proyecto_detalle/<int:idproyecto>/', mapa_proyecto_detalle),
     path('registerProyecto/', registerProyecto),
     path('getProyectoInmo/<int:idinmobiliaria>', getProyecto),
     path('listProyectoId/<int:idproyecto>', listProyectoId),

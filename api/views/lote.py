@@ -14,8 +14,9 @@ from rest_framework.response import Response
 
 from api.authentication import CustomJWTAuthentication
 from api.audit import log_audit_event
+from api.file_cleanup import delete_files_and_empty_dirs
 from api.models import Imagenes, Lote, Proyecto, Puntos, PuntosProyecto
-from api.security_uploads import build_secure_image_name, validate_uploaded_image
+from api.security_uploads import build_unique_image_name, validate_uploaded_image
 from api.serializers import (
     ImagenesSerializer,
     LoteMapaSerializer,
@@ -23,7 +24,7 @@ from api.serializers import (
     ProyectoSerializer,
 )
 from api.views.permissions import IsOwnerOfLote, IsSameInmobiliaria
-from api.views.permissions import is_project_owned_by_user, user_inmobiliaria_id
+from api.views.permissions import is_project_owned_by_user
 from api.validation_utils import parse_polygon_points, polygon_area_m2
 
 
@@ -34,6 +35,23 @@ def _parse_json_list(value):
         except json.JSONDecodeError:
             return []
     return value if isinstance(value, list) else []
+
+
+def _parse_int_list(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(value, list):
+        return []
+    parsed = []
+    for item in value:
+        try:
+            parsed.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return parsed
 
 
 def _ensure_activated_user(request):
@@ -225,12 +243,7 @@ def registerLote(request):
             imagenes_files = request.FILES.getlist("imagenes")
             for archivo in imagenes_files:
                 validate_uploaded_image(archivo)
-                archivo.name = build_secure_image_name(
-                    inmobiliaria_id=user_inmobiliaria_id(request.user),
-                    proyecto_id=project_id,
-                    image_type="lote",
-                    original_name=archivo.name,
-                )
+                archivo.name = build_unique_image_name(archivo.name)
                 imagen_serializer = ImagenesSerializer(
                     data={"idlote": last_id, "imagen": archivo}
                 )
@@ -298,6 +311,7 @@ def updateLote(request, idlote):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
+            image_paths_to_delete = []
             lote = serializer.save()
 
             # Actualizar puntos
@@ -328,14 +342,7 @@ def updateLote(request, idlote):
             nuevas_imagenes = []
             for archivo in request.FILES.getlist("imagenes"):
                 validate_uploaded_image(archivo)
-                archivo.name = build_secure_image_name(
-                    inmobiliaria_id=lote.idproyecto.idinmobiliaria_id
-                    if lote.idproyecto
-                    else user_inmobiliaria_id(request.user),
-                    proyecto_id=lote.idproyecto_id,
-                    image_type="lote-update",
-                    original_name=archivo.name,
-                )
+                archivo.name = build_unique_image_name(archivo.name)
                 img = ImagenesSerializer(
                     data={"idlote": lote.idlote, "imagen": archivo}
                 )
@@ -349,6 +356,25 @@ def updateLote(request, idlote):
                 if img.is_valid():
                     img.save()
                     nuevas_imagenes.append(img.data)
+
+            if "imagenes_eliminadas" in request.data:
+                ids_to_delete = _parse_int_list(request.data.get("imagenes_eliminadas", []))
+                if ids_to_delete:
+                    imagenes_qs = Imagenes.objects.filter(
+                        idlote=lote.idlote,
+                        idimagenes__in=ids_to_delete,
+                    )
+                    image_paths_to_delete.extend(
+                        str(path)
+                        for path in imagenes_qs.values_list("imagen", flat=True)
+                        if path
+                    )
+                    imagenes_qs.delete()
+
+            if image_paths_to_delete:
+                transaction.on_commit(
+                    lambda paths=image_paths_to_delete: delete_files_and_empty_dirs(paths)
+                )
 
         log_audit_event(
             request,
@@ -486,9 +512,17 @@ def deleteLote(request, idlote):
             )
 
         with transaction.atomic():
+            file_paths = [
+                str(path)
+                for path in Imagenes.objects.filter(idlote=idlote).values_list(
+                    "imagen", flat=True
+                )
+                if path
+            ]
             puntos_borrados = Puntos.objects.filter(idlote=idlote).delete()
             imagenes_borradas = Imagenes.objects.filter(idlote=idlote).delete()
             lote.delete()
+            transaction.on_commit(lambda: delete_files_and_empty_dirs(file_paths))
 
         log_audit_event(
             request,
@@ -659,12 +693,7 @@ def registerLotesMasivo(request):
                         imagenes_creadas = []
                         for img in imagenes:
                             validate_uploaded_image(img)
-                            img.name = build_secure_image_name(
-                                inmobiliaria_id=user_inmobiliaria_id(request.user),
-                                proyecto_id=project_id,
-                                image_type="lote-masivo",
-                                original_name=img.name,
-                            )
+                            img.name = build_unique_image_name(img.name)
                             img_serializer = ImagenesSerializer(
                                 data={"idlote": lote.idlote, "imagen": img}
                             )

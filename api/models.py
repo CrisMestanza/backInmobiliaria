@@ -1,5 +1,43 @@
+import uuid
+from pathlib import Path
+
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
+
+
+def _normalized_ext(filename):
+    ext = Path(filename or "").suffix.lower()
+    if ext == ".jpeg":
+        return ".jpg"
+    if ext in {".jpg", ".png"}:
+        return ext
+    return ".jpg"
+
+
+def upload_proyecto_image(instance, filename):
+    ext = _normalized_ext(filename)
+    proyecto = getattr(instance, "idproyecto", None)
+    inmobiliaria = getattr(proyecto, "idinmobiliaria", None) if proyecto else None
+    if not proyecto or not inmobiliaria:
+        return f"inmobiliarias/na/proyectos/na/proyecto/{uuid.uuid4().hex}{ext}"
+    return (
+        f"inmobiliarias/{inmobiliaria.idinmobiliaria}/proyectos/"
+        f"{proyecto.idproyecto}/proyecto/{uuid.uuid4().hex}{ext}"
+    )
+
+
+def upload_lote_image(instance, filename):
+    ext = _normalized_ext(filename)
+    lote = getattr(instance, "idlote", None)
+    proyecto = getattr(lote, "idproyecto", None) if lote else None
+    inmobiliaria = getattr(proyecto, "idinmobiliaria", None) if proyecto else None
+    if not lote or not proyecto or not inmobiliaria:
+        return f"inmobiliarias/na/proyectos/na/lotes/na/{uuid.uuid4().hex}{ext}"
+    return (
+        f"inmobiliarias/{inmobiliaria.idinmobiliaria}/proyectos/"
+        f"{proyecto.idproyecto}/lotes/{lote.idlote}/{uuid.uuid4().hex}{ext}"
+    )
+
 
 class Iconos(models.Model):
     idiconos = models.AutoField(primary_key=True)
@@ -14,7 +52,7 @@ class Iconos(models.Model):
 class Imagenes(models.Model):
     idimagenes = models.AutoField(primary_key=True)
     # imagen = models.CharField(max_length=200, blank=True, null=True)
-    imagen = models.ImageField(upload_to="lotes/", null=True, blank=True)
+    imagen = models.ImageField(upload_to=upload_lote_image, null=True, blank=True)
     idlote = models.ForeignKey('Lote', models.DO_NOTHING, db_column='idlote', blank=True, null=True)
 
     class Meta:
@@ -24,7 +62,7 @@ class Imagenes(models.Model):
 class ImagenesProyecto(models.Model):
     idimagenesp = models.AutoField(primary_key=True)
     # imagenproyecto = models.CharField(max_length=200, blank=True, null=True)
-    imagenproyecto = models.ImageField(upload_to="proyectos/", null=True, blank=True)
+    imagenproyecto = models.ImageField(upload_to=upload_proyecto_image, null=True, blank=True)
     idproyecto = models.ForeignKey('Proyecto', models.DO_NOTHING, db_column='idproyecto', blank=True, null=True)
 
     class Meta:

@@ -31,6 +31,15 @@ def build_secure_image_name(inmobiliaria_id, proyecto_id, image_type, original_n
     return f"inmo_{inmo}/proy_{proy}/{category}_{unique}{ext}"
 
 
+def build_unique_image_name(original_name):
+    ext = Path(original_name).suffix.lower()
+    if ext == ".jpeg":
+        ext = ".jpg"
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        ext = ".jpg"
+    return f"{uuid.uuid4().hex}{ext}"
+
+
 def _validate_extension(uploaded_file):
     ext = Path(uploaded_file.name).suffix.lower()
     if ext not in ALLOWED_IMAGE_EXTENSIONS:

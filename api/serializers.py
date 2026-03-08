@@ -2,6 +2,7 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
 from django.contrib.auth.password_validation import validate_password
 import json
+from statistics import mean
 import re
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -354,3 +355,150 @@ class CustomTokenObtainPairSerializer(serializers.Serializer):
         if hasattr(user, "inmobiliaria"):
             token["idinmobiliaria"] = user.inmobiliaria.idinmobiliaria
         return token
+
+
+def _polygon_centroid(points):
+    """
+    Calcula el centroide del polígono usando fórmula estándar.
+    Si no se puede (área 0), hace fallback a promedio de coordenadas.
+    """
+    coords = []
+    for p in points:
+        try:
+            lat = float(p.latitud)
+            lng = float(p.longitud)
+            coords.append((lng, lat))
+        except (TypeError, ValueError):
+            continue
+
+    if not coords:
+        return None
+    if len(coords) < 3:
+        return {"latitud": coords[0][1], "longitud": coords[0][0]}
+
+    area2 = 0.0
+    cx = 0.0
+    cy = 0.0
+    n = len(coords)
+    for i in range(n):
+        x1, y1 = coords[i]
+        x2, y2 = coords[(i + 1) % n]
+        cross = x1 * y2 - x2 * y1
+        area2 += cross
+        cx += (x1 + x2) * cross
+        cy += (y1 + y2) * cross
+
+    if abs(area2) < 1e-12:
+        return {
+            "latitud": mean([y for _, y in coords]),
+            "longitud": mean([x for x, _ in coords]),
+        }
+
+    area = area2 / 2.0
+    return {
+        "latitud": cy / (6.0 * area),
+        "longitud": cx / (6.0 * area),
+    }
+
+
+class ProyectoMapaMarkerSerializer(serializers.ModelSerializer):
+    latitud = serializers.SerializerMethodField()
+    longitud = serializers.SerializerMethodField()
+    visible = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Proyecto
+        fields = (
+            "idproyecto",
+            "nombreproyecto",
+            "latitud",
+            "longitud",
+            "estado",
+            "visible",
+            "idtipoinmobiliaria",
+        )
+
+    def _get_center(self, obj):
+        points = getattr(obj, "puntos_prefetch", None)
+        if points:
+            center = _polygon_centroid(points)
+            if center:
+                return center
+        try:
+            return {
+                "latitud": float(obj.latitud),
+                "longitud": float(obj.longitud),
+            }
+        except (TypeError, ValueError):
+            return {"latitud": None, "longitud": None}
+
+    def get_latitud(self, obj):
+        return self._get_center(obj).get("latitud")
+
+    def get_longitud(self, obj):
+        return self._get_center(obj).get("longitud")
+
+    def get_visible(self, obj):
+        return int(getattr(obj, "estado", 0) or 0) == 1
+
+
+class ProyectoMapaDetalleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Proyecto
+        fields = (
+            "idproyecto",
+            "nombreproyecto",
+            "latitud",
+            "longitud",
+            "idtipoinmobiliaria",
+            "estado",
+            "descripcion",
+            "precio",
+            "area_total_m2",
+            "dormitorios",
+            "banos",
+            "cuartos",
+            "titulo_propiedad",
+            "cochera",
+            "cocina",
+            "sala",
+            "patio",
+            "jardin",
+            "terraza",
+            "azotea",
+            "ancho",
+            "largo",
+        )
+
+
+class LoteMapaDetalleSerializer(serializers.ModelSerializer):
+    puntos = PuntosSimpleSerializer(source="puntos_set", many=True, read_only=True)
+
+    class Meta:
+        model = Lote
+        fields = (
+            "idlote",
+            "nombre",
+            "descripcion",
+            "estado",
+            "latitud",
+            "longitud",
+            "idtipoinmobiliaria",
+            "precio",
+            "vendido",
+            "area_total_m2",
+            "dormitorios",
+            "banos",
+            "cuartos",
+            "titulo_propiedad",
+            "cochera",
+            "cocina",
+            "sala",
+            "patio",
+            "jardin",
+            "terraza",
+            "azotea",
+            "ancho",
+            "largo",
+            "puntos",
+        )

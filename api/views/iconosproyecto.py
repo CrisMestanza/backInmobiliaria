@@ -6,6 +6,7 @@ from rest_framework.decorators import (
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from django.views.decorators.cache import cache_page
 
 from api.authentication import CustomJWTAuthentication
 from api.models import IconoProyecto
@@ -13,6 +14,7 @@ from api.serializers import IconoProyectoSerializer
 from api.views.permissions import is_project_owned_by_user
 
 
+@cache_page(300)
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def list_iconos_disponibles(_request):
@@ -39,6 +41,7 @@ def list_iconos_disponibles(_request):
         return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+@cache_page(120)
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def list_iconos_proyecto(_request, idproyecto):
