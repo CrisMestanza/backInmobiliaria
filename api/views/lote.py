@@ -661,6 +661,9 @@ def registerLotesMasivo(request):
                         "jardin": lote_data.get("jardin"),
                         "terraza": lote_data.get("terraza"),
                         "azotea": lote_data.get("azotea"),
+                        "pais": lote_data.get("pais"),
+                        "moneda": lote_data.get("moneda"),
+                        "bandera": lote_data.get("bandera"),
                     }
 
                     serializer = LoteSerializer(data=data_lote)

@@ -1,3 +1,8 @@
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
+PassengerAppRoot "/home/geohzdwu/api.geohabita.com/app"
+PassengerBaseURI "/"
+PassengerPython "/home/geohzdwu/virtualenv/api.geohabita.com/app/3.10/bin/python"
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
 <IfModule mod_rewrite.c>
 RewriteEngine On
 

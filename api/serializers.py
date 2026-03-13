@@ -216,6 +216,9 @@ class ProyectoMapaSerializer(serializers.ModelSerializer):
             "azotea",
             "ancho",
             "largo",
+            "bandera",
+            "pais",
+            "moneda",
             "iconos",
         )
 
@@ -468,6 +471,9 @@ class ProyectoMapaDetalleSerializer(serializers.ModelSerializer):
             "azotea",
             "ancho",
             "largo",
+            "moneda",
+            "bandera",
+            "pais"
         )
 
 
@@ -500,5 +506,8 @@ class LoteMapaDetalleSerializer(serializers.ModelSerializer):
             "azotea",
             "ancho",
             "largo",
+            "bandera",
+            "pais",
+            "moneda",
             "puntos",
         )

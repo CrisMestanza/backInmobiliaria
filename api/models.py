@@ -114,6 +114,10 @@ class Lote(models.Model):
     azotea = models.IntegerField(blank=True, null=True)
     ancho = models.FloatField(blank=True, null=True)
     largo = models.FloatField(blank=True, null=True)
+    pais = models.CharField(max_length=80, blank=True, null=True)
+    bandera = models.CharField(max_length=500, blank=True, null=True)
+    moneda = models.CharField(max_length=60, blank=True, null=True)
+    
     class Meta:
         managed = False
         db_table = 'lote'
@@ -144,6 +148,10 @@ class Proyecto(models.Model):
     azotea = models.IntegerField(blank=True, null=True)
     ancho = models.FloatField(blank=True, null=True)
     largo = models.FloatField(blank=True, null=True)
+    pais = models.CharField(max_length=80, blank=True, null=True)
+    bandera = models.CharField(max_length=500, blank=True, null=True)
+    moneda = models.CharField(max_length=60, blank=True, null=True)
+    
     class Meta:
         managed = False
         db_table = 'proyecto'
