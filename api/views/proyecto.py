@@ -378,6 +378,9 @@ def registerProyecto(request):
         "area_total_m2": request.data.get("area_total_m2", 0),
         "ancho": request.data.get("ancho", 0),
         "largo": request.data.get("largo", 0),
+        "pais": request.data.get("pais", ""),
+        "bandera": request.data.get("bandera", ""),
+        "moneda": request.data.get("moneda", ""),
     }
 
     serializer = ProyectoSerializer(data=data)
