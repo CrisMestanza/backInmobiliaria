@@ -87,6 +87,7 @@ urlpatterns = [
     path('list_iconos_proyecto/<int:idproyecto>', list_iconos_proyecto),
     path('list_iconos_disponibles/', list_iconos_disponibles),
     path('add_iconos_proyecto/', add_iconos_proyecto),
+    path('delete_icono_proyecto/<int:idiconoproyecto>/', delete_icono_proyecto),
     path('filtroCasaProyecto/<int:idtipoinmobiliaria>', tipoProyecto),
     
      # path('token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),

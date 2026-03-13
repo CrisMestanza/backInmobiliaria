@@ -93,3 +93,25 @@ def add_iconos_proyecto(request):
     # 👇 Esto hará que veas el detalle exacto del error
     print("Errores serializer:", serializer.errors)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["DELETE"])
+@authentication_classes([CustomJWTAuthentication])
+@permission_classes([IsAuthenticated])
+def delete_icono_proyecto(request, idiconoproyecto):
+    icono = IconoProyecto.objects.filter(idiconoproyecto=idiconoproyecto).first()
+    if not icono:
+        return Response(
+            {"error": "Icono no encontrado"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not is_project_owned_by_user(icono.idproyecto_id, request.user):
+        return Response(
+            {"error": "No tienes permisos para eliminar este ícono."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    icono.estado = 0
+    icono.save(update_fields=["estado"])
+    return Response({"message": "Ícono eliminado"}, status=status.HTTP_200_OK)
