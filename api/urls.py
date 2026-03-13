@@ -51,6 +51,7 @@ urlpatterns = [
     path('listProyectos/', listProyectos),
     path('mapa/proyectos/', list_proyectos_mapa),
     path('mapa/proyecto_detalle/<int:idproyecto>/', mapa_proyecto_detalle),
+    path('mapa/proyecto_share/<int:idproyecto>/', mapa_proyecto_share),
     path('registerProyecto/', registerProyecto),
     path('getProyectoInmo/<int:idinmobiliaria>', getProyecto),
     path('listProyectoId/<int:idproyecto>', listProyectoId),

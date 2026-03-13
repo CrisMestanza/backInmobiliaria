@@ -70,3 +70,5 @@ dist/
 # Node (si tienes frontend integrado)
 node_modules/
 
+tmp/
+passenger_wsgi.py

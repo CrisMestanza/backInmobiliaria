@@ -300,6 +300,45 @@ def mapa_proyecto_detalle(_request, idproyecto):
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
+def mapa_proyecto_share(_request, idproyecto):
+    """
+    Endpoint rápido para compartir proyecto:
+    proyecto + inmobiliaria + puntos (sin lotes).
+    """
+    proyecto = (
+        Proyecto.objects.filter(idproyecto=idproyecto, estado=1)
+        .select_related("idinmobiliaria")
+        .prefetch_related(
+            Prefetch(
+                "puntos",
+                queryset=PuntosProyecto.objects.only(
+                    "idproyecto_id", "latitud", "longitud", "orden"
+                ).order_by("orden"),
+            )
+        )
+        .first()
+    )
+
+    if not proyecto:
+        return Response(
+            {"error": "Proyecto no encontrado"}, status=status.HTTP_404_NOT_FOUND
+        )
+
+    return Response(
+        {
+            "proyecto": ProyectoMapaDetalleSerializer(proyecto).data,
+            "inmobiliaria": InmobiliariaSerializer(proyecto.idinmobiliaria).data
+            if proyecto.idinmobiliaria
+            else None,
+            "puntos": PuntosProyectoMapaSerializer(
+                getattr(proyecto, "puntos").all(), many=True
+            ).data,
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
 def listProyectos(_request):
     proyectos = (
         Proyecto.objects.filter(estado=1, puntos__isnull=False)
