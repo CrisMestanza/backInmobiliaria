@@ -30,6 +30,7 @@ urlpatterns = [
     #imagen
     path('list_imagen/<int:idlote>', list_imagen),
     path('list_imagen_proyecto/<int:idproyecto>', list_imagen_proyecto),
+    path('mapa/lote_detalle/<int:idlote>/', mapa_lote_detalle),
     path('delete_imagen/<int:idimagenes>/', delete_imagen),
     path('delete_imagen_proyecto/<int:idimagenesp>/', delete_imagen_proyecto),
     

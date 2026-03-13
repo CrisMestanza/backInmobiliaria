@@ -1,0 +1,20 @@
+<IfModule mod_rewrite.c>
+RewriteEngine On
+
+# Bloquear acceso a archivos sensibles
+<FilesMatch "\.(py|pyc|pyo|env|ini|log|sh|sql)$">
+    Require all denied
+</FilesMatch>
+
+# Bloquear archivos específicos
+<FilesMatch "^(manage\.py|settings\.py|requirements\.txt|\.env)$">
+    Require all denied
+</FilesMatch>
+
+# Bloquear carpetas del proyecto
+RewriteRule ^principal/ - [F,L]
+RewriteRule ^app/ - [F,L]
+RewriteRule ^venv/ - [F,L]
+RewriteRule ^env/ - [F,L]
+
+</IfModule>
