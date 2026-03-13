@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 🚀 Deploy via SSH
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -18,14 +18,29 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            cd /home/geohzdwu/api.geohabita.com/app
+            set -e
 
-            git pull origin main
+            APP=/home/geohzdwu/api.geohabita.com/app
+            VENV=/home/geohzdwu/virtualenv/api.geohabita.com/app/3.10/bin/activate
+            LOG=/home/geohzdwu/deploy.log
 
-            source /home/geohzdwu/virtualenv/api.geohabita.com/app/3.10/bin/activate
-            pip install -r requirements.txt
+            {
+              echo "===== DEPLOY START $(date) ====="
 
-            python manage.py migrate --noinput
-            python manage.py collectstatic --noinput
+              cd $APP
 
-            touch tmp/restart.txt
+              git fetch origin
+              git reset --hard origin/main
+
+              source $VENV
+
+              pip install -r requirements.txt --quiet
+
+              python manage.py migrate --noinput
+              python manage.py collectstatic --noinput
+              python manage.py check --deploy
+
+              touch tmp/restart.txt
+
+              echo "===== DEPLOY DONE $(date) ====="
+            } >> $LOG 2>&1
