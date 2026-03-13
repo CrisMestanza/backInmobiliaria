@@ -20,6 +20,9 @@ from api.security_uploads import build_unique_image_name, validate_uploaded_imag
 from api.serializers import (
     ImagenesSerializer,
     LoteMapaSerializer,
+    LoteMapaDetalleSerializer,
+    ProyectoMapaDetalleSerializer,
+    InmobiliariaSerializer,
     LoteSerializer,
     ProyectoSerializer,
 )
@@ -112,6 +115,37 @@ def get_lotes_con_puntos(_request, idproyecto):
 
     serializer = LoteMapaSerializer(lotes, many=True)
     return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def mapa_lote_detalle(_request, idlote):
+    lote = (
+        Lote.objects.filter(idlote=idlote)
+        .select_related("idproyecto__idinmobiliaria")
+        .prefetch_related(
+            Prefetch(
+                "puntos_set",
+                queryset=Puntos.objects.only(
+                    "idlote_id", "latitud", "longitud", "orden"
+                ).order_by("orden"),
+            )
+        )
+        .first()
+    )
+    if not lote:
+        return Response({"error": "Lote no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
+    proyecto = lote.idproyecto
+    inmobiliaria = proyecto.idinmobiliaria if proyecto else None
+
+    return Response(
+        {
+            "lote": LoteMapaDetalleSerializer(lote).data,
+            "proyecto": ProyectoMapaDetalleSerializer(proyecto).data if proyecto else None,
+            "inmobiliaria": InmobiliariaSerializer(inmobiliaria).data if inmobiliaria else None,
+        }
+    )
 
 
 # ---
