@@ -26,15 +26,15 @@ from .models import (
 class InmobiliariaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Inmobiliaria
-        fields = '__all__'  # O lista de campos ['id', 'nombre', 'precio']
+        fields = '__all__'
 class PuntosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Puntos
-        fields = '__all__'  # O lista de campos ['id', 'nombre', 'precio']
+        fields = '__all__'
 class PuntosProyectoSerializer(serializers.ModelSerializer):
     class Meta:
         model = PuntosProyecto
-        fields = '__all__'  
+        fields = '__all__'
 class ImagenesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Imagenes
@@ -48,12 +48,12 @@ class TipoInmobiliariasSerializer(serializers.ModelSerializer):
     class Meta:
         model = TipoInmobiliaria
         fields = '__all__'
-        
+
 class ProyectoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Proyecto
         fields = '__all__'
-        
+
 class LoteSerializer(serializers.ModelSerializer):
     inmobiliaria = InmobiliariaSerializer(source='idproyecto.idinmobiliaria', read_only=True)
     proyectos = ProyectoSerializer(source='idproyecto', read_only=True)
@@ -66,7 +66,7 @@ class LoteSerializer(serializers.ModelSerializer):
 class IconosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Iconos
-        fields = '__all__'  # O lista de campos ['id', 'nombre', 'precio']
+        fields = '__all__'
 
 class UsuarioSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
@@ -130,14 +130,14 @@ class UsuarioSerializer(serializers.ModelSerializer):
 class ClickProyectosSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClickProyectos
-        fields = '__all__'  # O lista de campos ['id', 'nombre', 'precio']
-    
-        
+        fields = '__all__'
+
+
 class ClicksContactosSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClicksContactos
-        fields = '__all__'  # O lista de campos ['id', 'nombre', 'precio']
-    
+        fields = '__all__'
+
 
 
 class IconoProyectoSerializer(serializers.ModelSerializer):
@@ -315,7 +315,7 @@ class LoginSerializer(serializers.Serializer):
 
         data["usuario"] = usuario
         return data
-    
+
 class CustomTokenObtainPairSerializer(serializers.Serializer):
     correo = serializers.CharField()
     password = serializers.CharField(write_only=True)

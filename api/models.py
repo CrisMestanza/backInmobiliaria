@@ -117,7 +117,7 @@ class Lote(models.Model):
     pais = models.CharField(max_length=80, blank=True, null=True)
     bandera = models.CharField(max_length=500, blank=True, null=True)
     moneda = models.CharField(max_length=60, blank=True, null=True)
-    
+
     class Meta:
         managed = False
         db_table = 'lote'
@@ -151,7 +151,8 @@ class Proyecto(models.Model):
     pais = models.CharField(max_length=80, blank=True, null=True)
     bandera = models.CharField(max_length=500, blank=True, null=True)
     moneda = models.CharField(max_length=60, blank=True, null=True)
-    
+    publico_mapa = models.IntegerField(blank=True, null=True)
+
     class Meta:
         managed = False
         db_table = 'proyecto'

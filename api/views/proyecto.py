@@ -3,7 +3,7 @@ from typing import Any, TypedDict, cast
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from django.views.decorators.cache import cache_page
 from rest_framework import status
 from rest_framework.decorators import (
@@ -77,6 +77,7 @@ PROYECTO_MAP_MARKER_FIELDS = (
     "longitud",
     "estado",
     "idtipoinmobiliaria_id",
+    "publico_mapa",
 )
 
 LOTE_MAP_DETAIL_FIELDS = (
@@ -210,6 +211,8 @@ def list_proyectos_mapa(request):
         proyectos = proyectos.filter(idtipoinmobiliaria=tipo)
     if inmo:
         proyectos = proyectos.filter(idinmobiliaria=inmo)
+    else:
+        proyectos = proyectos.filter(Q(publico_mapa=1) | Q(publico_mapa__isnull=True))
     if rango:
         try:
             min_p, max_p = map(float, str(rango).split("-"))
