@@ -229,7 +229,16 @@ class ProyectoDetalleMapaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Proyecto
-        fields = ("idproyecto", "nombreproyecto", "puntos", "lotes")
+        fields = (
+            "idproyecto",
+            "nombreproyecto",
+            "imagen_360_url",
+            "dron_lat",
+            "dron_lng",
+            "dron_altitud",
+            "puntos",
+            "lotes",
+        )
 
 
 class InmobiliariaRegistroSerializer(serializers.ModelSerializer):
@@ -473,7 +482,11 @@ class ProyectoMapaDetalleSerializer(serializers.ModelSerializer):
             "largo",
             "moneda",
             "bandera",
-            "pais"
+            "pais",
+            "imagen_360_url",
+            "dron_lat",
+            "dron_lng",
+            "dron_altitud",
         )
 
 

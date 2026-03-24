@@ -151,6 +151,10 @@ class Proyecto(models.Model):
     pais = models.CharField(max_length=80, blank=True, null=True)
     bandera = models.CharField(max_length=500, blank=True, null=True)
     moneda = models.CharField(max_length=60, blank=True, null=True)
+    imagen_360_url = models.CharField(max_length=500, blank=True, null=True)
+    dron_lat = models.DecimalField(max_digits=10, decimal_places=8, blank=True, null=True)
+    dron_lng = models.DecimalField(max_digits=11, decimal_places=8, blank=True, null=True)
+    dron_altitud = models.IntegerField(blank=True, null=True, default=80)
     publico_mapa = models.IntegerField(blank=True, null=True)
 
     class Meta:
