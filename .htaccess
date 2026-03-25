@@ -22,3 +22,10 @@ RewriteRule ^venv/ - [F,L]
 RewriteRule ^env/ - [F,L]
 
 </IfModule>
+
+# Permitir CORS en archivos de media (imágenes) para visores 360
+<IfModule mod_headers.c>
+    <FilesMatch "\.(jpe?g|png|webp|gif)$">
+        Header always set Access-Control-Allow-Origin "*"
+    </FilesMatch>
+</IfModule>
