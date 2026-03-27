@@ -364,3 +364,58 @@ class ApiAuditLog(models.Model):
     class Meta:
         managed = True
         db_table = "api_audit_log"
+        
+
+import uuid
+
+def upload_imagen360_casas(instance, filename):
+    ext = _normalized_ext(filename)
+    
+    # Usamos safe navigation o verificamos existencia
+    proyecto = instance.idproyecto
+    lote = instance.idlote
+    inmobiliaria = proyecto.idinmobiliaria if proyecto else None
+
+    # Si falta alguno, lo mandamos a una carpeta genérica "varios"
+    if not proyecto or not lote or not inmobiliaria:
+        return f"imagenesCasas360/sin_clasificar/{uuid.uuid4().hex}{ext}"
+    
+    return (
+        f"inmobiliarias/{inmobiliaria.idinmobiliaria}/proyectos/"
+        f"{proyecto.idproyecto}/lotes/{lote.idlote}/imagenesCasas360/{uuid.uuid4().hex}{ext}"
+    )
+    
+class Imagen360(models.Model):
+    id_imagen = models.AutoField(primary_key=True)
+    nombre = models.CharField(max_length=100)
+    
+    imagen = models.ImageField(
+        upload_to=upload_imagen360_casas, 
+        max_length=500, 
+        db_column='url',
+        null=True,
+        blank=True
+    )
+    
+    # Marcamos como opcionales con null=True y blank=True
+    idproyecto = models.ForeignKey(
+        'Proyecto', 
+        on_delete=models.SET_NULL, # Evita borrar la imagen si se borra el proyecto
+        db_column='idproyecto',
+        related_name='imagenes360_proyecto',
+        null=True, 
+        blank=True
+    )
+    
+    idlote = models.ForeignKey(
+        'Lote', 
+        on_delete=models.SET_NULL, # Evita borrar la imagen si se borra el lote
+        db_column='idlote',
+        related_name='imagenes360_lote',
+        null=True, 
+        blank=True
+    )
+
+    class Meta:
+        managed = False
+        db_table = 'imagenes_360'

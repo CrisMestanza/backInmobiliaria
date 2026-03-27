@@ -11,6 +11,7 @@ from .views.iconos import *
 from .views.iconosproyecto import *
 from .views.bot import *
 from .views.clicks import *
+from .views.imagen360Casa import *
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 urlpatterns = [
@@ -107,6 +108,10 @@ urlpatterns = [
     
     # Filtro combinados 
     path('proyectosFiltrados/', proyectos_filtrados),
+    
+    # imagen 360 casas
+    path('guardar_imagen_360_casa/', guardar_imagenes_360_multiple),
+    
 
     ]
 
