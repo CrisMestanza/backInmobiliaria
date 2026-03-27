@@ -2,7 +2,9 @@ from rest_framework.decorators import api_view, permission_classes, throttle_cla
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from api.models import Imagen360, Proyecto, Lote
+from api.models import *
+from api.serializers import *
+
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -51,3 +53,16 @@ def guardar_imagenes_360_multiple(request):
 
     except Exception as e:
         return Response({"error": str(e)}, status=500)
+    
+
+@api_view(['GET']) # Permitimos GET para que sea fácil de probar
+@permission_classes([AllowAny])
+def get_imagenes_360_multiple(request, idproyecto):
+    # 1. Obtenemos todas las imágenes filtradas por el ID del proyecto
+    imagenes = Imagen360.objects.filter(idproyecto=idproyecto)
+    
+    # 2. Serializamos la lista (many=True es obligatorio porque son varios objetos)
+    serializer = Imagen360Serializer(imagenes, many=True)
+    
+    # 3. Retornamos los datos correctamente
+    return Response(serializer.data)

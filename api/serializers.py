@@ -7,21 +7,7 @@ import re
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import (
-    ClickProyectos,
-    ClicksContactos,
-    IconoProyecto,
-    Iconos,
-    Imagenes,
-    ImagenesProyecto,
-    Inmobiliaria,
-    Lote,
-    Proyecto,
-    Puntos,
-    PuntosProyecto,
-    TipoInmobiliaria,
-    Usuario,
-)
+from .models import *
 
 class InmobiliariaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -524,3 +510,8 @@ class LoteMapaDetalleSerializer(serializers.ModelSerializer):
             "moneda",
             "puntos",
         )
+
+class Imagen360Serializer(serializers.ModelSerializer):
+    class Meta:
+        model = Imagen360
+        fields = '__all__'

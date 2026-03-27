@@ -111,6 +111,7 @@ urlpatterns = [
     
     # imagen 360 casas
     path('guardar_imagen_360_casa/', guardar_imagenes_360_multiple),
+    path('get_imagen_360_casa/<int:idproyecto>/', get_imagenes_360_multiple)
     
 
     ]
