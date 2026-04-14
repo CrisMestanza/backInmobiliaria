@@ -66,3 +66,44 @@ def get_imagenes_360_multiple(request, idproyecto):
     
     # 3. Retornamos los datos correctamente
     return Response(serializer.data)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@parser_classes([MultiPartParser, FormParser])
+def agregar_punto_recorrido(request):
+    try:
+        # Datos del punto
+        id_origen = request.data.get('id_origen')
+        yaw = request.data.get('yaw')
+        pitch = request.data.get('pitch')
+        nombre_destino = request.data.get('nombre_destino')
+        
+        # Datos de relación GeoHabita
+        id_proyecto = request.data.get('idproyecto')
+        id_lote = request.data.get('idlote')
+        archivo = request.FILES.get('imagen')
+
+        # 1. Creamos la nueva imagen 360 (el destino)
+        proyecto = Proyecto.objects.get(idproyecto=id_proyecto)
+        lote = Lote.objects.filter(idlote=id_lote).first() if id_lote else None
+
+        nueva_img = Imagen360.objects.create(
+            nombre=nombre_destino,
+            imagen=archivo,
+            idproyecto=proyecto,
+            idlote=lote
+        )
+
+        # 2. Creamos el Hotspot (la flecha que las une)
+        Hotspot360.objects.create(
+            imagen_origen_id=id_origen,
+            imagen_destino=nueva_img,
+            yaw=yaw,
+            pitch=pitch,
+            texto_ayuda=f"Ir a {nombre_destino}"
+        )
+
+        return Response({"message": "Punto de recorrido creado con éxito"}, status=201)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)

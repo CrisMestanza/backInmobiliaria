@@ -175,7 +175,7 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # ============================================
 # CORS
 # ============================================
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [o.strip() for o in _get_env("DJANGO_CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
 CORS_ALLOW_CREDENTIALS = _get_bool("DJANGO_CORS_ALLOW_CREDENTIALS", False)
 

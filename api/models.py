@@ -419,3 +419,23 @@ class Imagen360(models.Model):
     class Meta:
         managed = False
         db_table = 'imagenes_360'
+        
+    # Coordenadas en la esfera (Pitch y Yaw)
+    yaw = models.FloatField(help_text="Posición horizontal")
+    pitch = models.FloatField(help_text="Posición vertical")
+    
+    texto_ayuda = models.CharField(max_length=100, blank=True, null=True)
+    
+    
+    
+class Hotspot360(models.Model):
+    id_hotspot = models.AutoField(primary_key=True)
+    imagen_origen = models.ForeignKey(Imagen360, on_delete=models.CASCADE, related_name='hotspots', db_column='id_imagen_origen')
+    imagen_destino = models.ForeignKey(Imagen360, on_delete=models.CASCADE, related_name='hotspots_hacia', db_column='id_imagen_destino')
+    yaw = models.FloatField()
+    pitch = models.FloatField()
+    texto_ayuda = models.CharField(max_length=100, null=True, blank=True)
+
+    class Meta:
+        managed = False # Ya que la creaste por SQL
+        db_table = 'hotspots_360'
