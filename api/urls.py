@@ -111,6 +111,7 @@ urlpatterns = [
     
     # imagen 360 casas
     path('guardar_imagen_360_casa/', guardar_imagenes_360_multiple),
+    path('guardar_tour_360_completo/', guardar_tour_360_completo),
     path('agregar_punto_recorrido/', agregar_punto_recorrido),
     path('conectar_puntos_360/', conectar_puntos_360),
     path('get_hotspots_por_imagen/<int:id_imagen>/', get_hotspots_por_imagen),

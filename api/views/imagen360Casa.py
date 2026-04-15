@@ -2,13 +2,132 @@ from rest_framework.decorators import api_view, permission_classes, throttle_cla
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from django.db import transaction
+import json
 from api.models import *
 from api.serializers import *
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@parser_classes([MultiPartParser, FormParser])
+def guardar_tour_360_completo(request):
+    """
+    Guarda un tour 360 completo enviado desde el frontend como borrador local.
+
+    Espera multipart/form-data con:
+    - idproyecto: id del proyecto
+    - idlote: opcional
+    - imagenes: lista de archivos
+    - nombres: lista de nombres, en el mismo orden que imagenes
+    - draft_ids: lista de ids temporales del frontend, en el mismo orden que imagenes
+    - conexiones: JSON string con items { origenId, destinoId, yaw, pitch, destinoNombre }
+
+    El frontend puede mandar conexiones usando ids temporales tipo "draft-...".
+    Esta vista crea las imagenes, mapea esos ids temporales a ids reales y luego crea los hotspots.
+    """
+    id_proyecto = request.data.get('idproyecto')
+    id_lote = request.data.get('idlote')
+    archivos = request.FILES.getlist('imagenes')
+    nombres = request.data.getlist('nombres')
+    draft_ids = request.data.getlist('draft_ids')
+    conexiones_raw = request.data.get('conexiones', '[]')
+
+    if not id_proyecto:
+        return Response({"error": "idproyecto es requerido"}, status=400)
+
+    proyecto_instancia = Proyecto.objects.filter(idproyecto=id_proyecto).first()
+    if not proyecto_instancia:
+        return Response({"error": "Proyecto no encontrado"}, status=404)
+
+    lote_instancia = Lote.objects.filter(idlote=id_lote).first() if id_lote else None
+
+    if len(nombres) != len(archivos):
+        return Response({"error": "La cantidad de nombres e imagenes no coinciden"}, status=400)
+
+    if len(draft_ids) != len(archivos):
+        return Response({"error": "La cantidad de draft_ids e imagenes no coinciden"}, status=400)
+
+    try:
+        conexiones = json.loads(conexiones_raw) if conexiones_raw else []
+    except json.JSONDecodeError:
+        return Response({"error": "conexiones debe ser un JSON valido"}, status=400)
+
+    if not isinstance(conexiones, list):
+        return Response({"error": "conexiones debe ser una lista"}, status=400)
+
+    try:
+        with transaction.atomic():
+            draft_to_real_id = {}
+            imagenes_creadas = []
+
+            for index, archivo in enumerate(archivos):
+                nueva_imagen = Imagen360.objects.create(
+                    nombre=nombres[index],
+                    idproyecto=proyecto_instancia,
+                    idlote=lote_instancia,
+                    imagen=archivo,
+                    yaw=0,
+                    pitch=0
+                )
+                draft_to_real_id[str(draft_ids[index])] = nueva_imagen.id_imagen
+                imagenes_creadas.append({
+                    "draft_id": str(draft_ids[index]),
+                    "id_imagen": nueva_imagen.id_imagen,
+                    "nombre": nueva_imagen.nombre,
+                    "imagen": nueva_imagen.imagen.url if nueva_imagen.imagen else None,
+                })
+
+            hotspots_creados = []
+
+            def resolver_id_imagen(valor):
+                valor = str(valor)
+                if valor in draft_to_real_id:
+                    return draft_to_real_id[valor]
+                try:
+                    return int(valor)
+                except (TypeError, ValueError):
+                    return None
+
+            for conexion in conexiones:
+                origen_id = resolver_id_imagen(conexion.get('origenId'))
+                destino_id = resolver_id_imagen(conexion.get('destinoId'))
+                yaw = conexion.get('yaw')
+                pitch = conexion.get('pitch')
+
+                if origen_id is None or destino_id is None:
+                    raise ValueError("Hay conexiones con ids de imagen invalidos")
+
+                if yaw is None or pitch is None:
+                    raise ValueError("Hay conexiones sin yaw o pitch")
+
+                hotspot = Hotspot360.objects.create(
+                    imagen_origen_id=origen_id,
+                    imagen_destino_id=destino_id,
+                    yaw=yaw,
+                    pitch=pitch,
+                    texto_ayuda=f"Ir a {conexion.get('destinoNombre', 'vista 360')}"
+                )
+                hotspots_creados.append({
+                    "id_hotspot": hotspot.id_hotspot,
+                    "origen_id": origen_id,
+                    "destino_id": destino_id,
+                    "yaw": hotspot.yaw,
+                    "pitch": hotspot.pitch,
+                })
+
+        return Response({
+            "message": "Tour 360 guardado correctamente",
+            "imagenes": imagenes_creadas,
+            "hotspots": hotspots_creados,
+            "image_map": draft_to_real_id,
+        }, status=201)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
 
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
-# @throttle_classes([ClickRateThrottle]) # Asegúrate de que ClickRateThrottle esté bien definido
+# @throttle_classes([ClickRateThrottle]) # Asegurate de que ClickRateThrottle este bien definido
 @parser_classes([MultiPartParser, FormParser])
 def guardar_imagenes_360_multiple(request):
     # 1. Obtener listas de datos
