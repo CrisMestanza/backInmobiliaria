@@ -73,21 +73,19 @@ def get_imagenes_360_multiple(request, idproyecto):
 @parser_classes([MultiPartParser, FormParser])
 def agregar_punto_recorrido(request):
     try:
-        # Datos del punto
         id_origen = request.data.get('id_origen')
         yaw = request.data.get('yaw')
         pitch = request.data.get('pitch')
         nombre_destino = request.data.get('nombre_destino')
-        
-        # Datos de relación GeoHabita
+
         id_proyecto = request.data.get('idproyecto')
         id_lote = request.data.get('idlote')
         archivo = request.FILES.get('imagen')
 
-        # 1. Creamos la nueva imagen 360 (el destino)
         proyecto = Proyecto.objects.get(idproyecto=id_proyecto)
         lote = Lote.objects.filter(idlote=id_lote).first() if id_lote else None
 
+        # 1. Crear nueva imagen
         nueva_img = Imagen360.objects.create(
             nombre=nombre_destino,
             imagen=archivo,
@@ -95,7 +93,7 @@ def agregar_punto_recorrido(request):
             idlote=lote
         )
 
-        # 2. Creamos el Hotspot (la flecha que las une)
+        # 2. Crear hotspot
         Hotspot360.objects.create(
             imagen_origen_id=id_origen,
             imagen_destino=nueva_img,
@@ -104,6 +102,62 @@ def agregar_punto_recorrido(request):
             texto_ayuda=f"Ir a {nombre_destino}"
         )
 
-        return Response({"message": "Punto de recorrido creado con éxito"}, status=201)
+        return Response({
+            "message": "ok",
+            "id_imagen": nueva_img.id_imagen,
+            "url": nueva_img.imagen.url,
+            "nombre": nueva_img.nombre
+        }, status=201)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)   
+    
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def conectar_puntos_360(request):
+    try:
+        id_origen = request.data.get('id_origen')
+        id_destino = request.data.get('id_destino')
+        yaw = request.data.get('yaw')
+        pitch = request.data.get('pitch')
+
+        Hotspot360.objects.create(
+            imagen_origen_id=id_origen,
+            imagen_destino_id=id_destino,
+            yaw=yaw,
+            pitch=pitch,
+            texto_ayuda="Ir"
+        )
+
+        return Response({"message": "ok"}, status=201)
+
     except Exception as e:
         return Response({"error": str(e)}, status=500)
+    
+    
+    
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def get_hotspots_por_imagen(request, id_imagen):
+    hotspots = Hotspot360.objects.filter(imagen_origen_id=id_imagen)
+
+    data = [
+        {
+            "id": h.id_hotspot,
+            "yaw": h.yaw,
+            "pitch": h.pitch,
+            "destino": {
+                "id_imagen": h.imagen_destino.id_imagen,
+                "imagen": h.imagen_destino.imagen.url,
+                "nombre": h.imagen_destino.nombre
+            }
+        }
+        for h in hotspots
+    ]
+
+    return Response(data)
+
+@api_view(['DELETE'])
+def eliminar_hotspot(request, id):
+    Hotspot360.objects.filter(id_hotspot=id).delete()
+    return Response({"ok": True})
