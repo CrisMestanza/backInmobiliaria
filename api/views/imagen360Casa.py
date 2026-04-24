@@ -30,6 +30,7 @@ def guardar_tour_360_completo(request):
     nombres = request.data.getlist('nombres')
     draft_ids = request.data.getlist('draft_ids')
     conexiones_raw = request.data.get('conexiones', '[]')
+    overlays_2d_raw = request.data.get('overlays_2d')
 
     if not id_proyecto:
         return Response({"error": "idproyecto es requerido"}, status=400)
@@ -54,28 +55,17 @@ def guardar_tour_360_completo(request):
     if not isinstance(conexiones, list):
         return Response({"error": "conexiones debe ser una lista"}, status=400)
 
+    overlays_2d_payload = None
+    if overlays_2d_raw:
+        try:
+            overlays_2d_payload = json.loads(overlays_2d_raw)
+        except json.JSONDecodeError:
+            return Response({"error": "overlays_2d debe ser un JSON valido"}, status=400)
+
     try:
         with transaction.atomic():
             draft_to_real_id = {}
             imagenes_creadas = []
-
-            for index, archivo in enumerate(archivos):
-                nueva_imagen = Imagen360.objects.create(
-                    nombre=nombres[index],
-                    idproyecto=proyecto_instancia,
-                    idlote=lote_instancia,
-                    imagen=archivo,
-                    yaw=0,
-                    pitch=0
-                )
-                draft_to_real_id[str(draft_ids[index])] = nueva_imagen.id_imagen
-                imagenes_creadas.append({
-                    "draft_id": str(draft_ids[index]),
-                    "id_imagen": nueva_imagen.id_imagen,
-                    "nombre": nueva_imagen.nombre,
-                    "imagen": nueva_imagen.imagen.url if nueva_imagen.imagen else None,
-                })
-
             hotspots_creados = []
 
             def resolver_id_imagen(valor):
@@ -86,6 +76,48 @@ def guardar_tour_360_completo(request):
                     return int(valor)
                 except (TypeError, ValueError):
                     return None
+
+            for index, archivo in enumerate(archivos):
+                nueva_imagen = Imagen360.objects.create(
+                    nombre=nombres[index],
+                    idproyecto=proyecto_instancia,
+                    idlote=lote_instancia,
+                    imagen=archivo,
+                    yaw=0,
+                    pitch=0,
+                    overlays_2d=None
+                )
+                draft_to_real_id[str(draft_ids[index])] = nueva_imagen.id_imagen
+                imagenes_creadas.append({
+                    "draft_id": str(draft_ids[index]),
+                    "id_imagen": nueva_imagen.id_imagen,
+                    "nombre": nueva_imagen.nombre,
+                    "imagen": nueva_imagen.imagen.url if nueva_imagen.imagen else None,
+                })
+
+            overlays_2d_resolved = None
+            if isinstance(overlays_2d_payload, dict):
+                overlays_2d_resolved = dict(overlays_2d_payload)
+                layouts = overlays_2d_payload.get('layouts') or []
+                resolved_layouts = []
+
+                for layout in layouts:
+                    resolved_image_id = resolver_id_imagen(
+                        layout.get('imageId') or layout.get('imagenId') or layout.get('id_imagen')
+                    )
+                    if resolved_image_id is None:
+                        continue
+                    layout_copy = dict(layout)
+                    layout_copy['imageId'] = resolved_image_id
+                    resolved_layouts.append(layout_copy)
+
+                overlays_2d_resolved['layouts'] = resolved_layouts
+                overlays_2d_json = json.dumps(overlays_2d_resolved)
+
+                for layout in resolved_layouts:
+                    Imagen360.objects.filter(id_imagen=layout['imageId']).update(
+                        overlays_2d=overlays_2d_json
+                    )
 
             for conexion in conexiones:
                 origen_id = resolver_id_imagen(conexion.get('origenId'))
@@ -114,11 +146,16 @@ def guardar_tour_360_completo(request):
                     "pitch": hotspot.pitch,
                 })
 
+            if overlays_2d_resolved:
+                for item in imagenes_creadas:
+                    item['overlays_2d'] = overlays_2d_resolved
+
         return Response({
             "message": "Tour 360 guardado correctamente",
             "imagenes": imagenes_creadas,
             "hotspots": hotspots_creados,
             "image_map": draft_to_real_id,
+            "overlays_2d": overlays_2d_resolved,
         }, status=201)
 
     except Exception as e:

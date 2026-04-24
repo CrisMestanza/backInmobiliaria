@@ -423,6 +423,7 @@ class Imagen360(models.Model):
     # Coordenadas en la esfera (Pitch y Yaw)
     yaw = models.FloatField(help_text="Posición horizontal")
     pitch = models.FloatField(help_text="Posición vertical")
+    overlays_2d = models.TextField(db_column='overlays_2d', null=True, blank=True)
     
     texto_ayuda = models.CharField(max_length=100, blank=True, null=True)
     
