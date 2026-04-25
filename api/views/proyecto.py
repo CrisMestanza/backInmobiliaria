@@ -576,6 +576,7 @@ def updateProyecto(request, idproyecto):
     if serializer.is_valid():
         with transaction.atomic():
             image_paths_to_delete: list[str] = []
+            nuevas_imagenes: list[dict[str, Any]] = []
             serializer.save()
             if "puntos" in request.data:
                 puntos_data_raw = _parse_json_list(request.data.get("puntos", []))
@@ -609,6 +610,20 @@ def updateProyecto(request, idproyecto):
                         if path
                     )
                     imagenes_qs.delete()
+            for img in request.FILES.getlist("imagenes"):
+                validate_uploaded_image(img)
+                img.name = build_unique_image_name(img.name)
+                imagen_obj = ImagenesProyecto.objects.create(
+                    idproyecto=proyecto,
+                    imagenproyecto=img,
+                )
+                nuevas_imagenes.append(
+                    {
+                        "idimagenesp": imagen_obj.idimagenesp,
+                        "imagenproyecto": imagen_obj.imagenproyecto.url,
+                        "idproyecto": proyecto.idproyecto,
+                    }
+                )
             if image_paths_to_delete:
                 transaction.on_commit(
                     lambda paths=image_paths_to_delete: delete_files_and_empty_dirs(paths)
@@ -621,7 +636,13 @@ def updateProyecto(request, idproyecto):
             target_resource="proyecto",
             target_id=idproyecto,
         )
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(
+            {
+                **serializer.data,
+                "imagenes_creadas": nuevas_imagenes,
+            },
+            status=status.HTTP_200_OK,
+        )
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
