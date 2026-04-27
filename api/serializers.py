@@ -1,13 +1,51 @@
 from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
 from django.contrib.auth.password_validation import validate_password
+from django.core.files.storage import default_storage
 import json
+import os
 from statistics import mean
 import re
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import *
+
+
+def _project_360_preview_url(value):
+    if not value:
+        return None
+    root, ext = os.path.splitext(str(value))
+    return f"{root}_preview{ext or '.jpg'}"
+
+
+def _project_360_config_path(value):
+    if not value:
+        return None
+    root, _ext = os.path.splitext(str(value))
+    return f"{root}_config.json"
+
+
+def _project_360_config_payload(value):
+    if hasattr(value, "viewer_360_config"):
+      raw_value = getattr(value, "viewer_360_config", None)
+      if raw_value:
+          try:
+              return json.loads(raw_value) if isinstance(raw_value, str) else raw_value
+          except Exception:
+              pass
+      value = getattr(value, "imagen_360_url", None)
+    path = _project_360_config_path(value)
+    if not path:
+        return None
+    storage_path = path.replace("/media/", "", 1)
+    if not default_storage.exists(storage_path):
+        return None
+    try:
+        with default_storage.open(storage_path, "r") as handle:
+            return json.load(handle)
+    except Exception:
+        return None
 
 class InmobiliariaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -36,9 +74,18 @@ class TipoInmobiliariasSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ProyectoSerializer(serializers.ModelSerializer):
+    imagen_360_preview_url = serializers.SerializerMethodField()
+    viewer_360_config = serializers.SerializerMethodField()
+
     class Meta:
         model = Proyecto
         fields = '__all__'
+
+    def get_imagen_360_preview_url(self, obj):
+        return _project_360_preview_url(obj.imagen_360_url)
+
+    def get_viewer_360_config(self, obj):
+        return _project_360_config_payload(obj)
 
 class LoteSerializer(serializers.ModelSerializer):
     inmobiliaria = InmobiliariaSerializer(source='idproyecto.idinmobiliaria', read_only=True)
@@ -175,6 +222,8 @@ class IconoProyectoMapaSerializer(serializers.ModelSerializer):
 
 class ProyectoMapaSerializer(serializers.ModelSerializer):
     iconos = IconoProyectoMapaSerializer(source="iconos_proyecto", many=True, read_only=True)
+    imagen_360_preview_url = serializers.SerializerMethodField()
+    viewer_360_config = serializers.SerializerMethodField()
 
     class Meta:
         model = Proyecto
@@ -205,13 +254,27 @@ class ProyectoMapaSerializer(serializers.ModelSerializer):
             "bandera",
             "pais",
             "moneda",
+            "imagen_360_url",
+            "imagen_360_preview_url",
+            "dron_lat",
+            "dron_lng",
+            "dron_altitud",
+            "viewer_360_config",
             "iconos",
         )
+
+    def get_imagen_360_preview_url(self, obj):
+        return _project_360_preview_url(obj.imagen_360_url)
+
+    def get_viewer_360_config(self, obj):
+        return _project_360_config_payload(obj)
 
 
 class ProyectoDetalleMapaSerializer(serializers.ModelSerializer):
     puntos = PuntosProyectoMapaSerializer(many=True, read_only=True)
     lotes = LoteMapaSerializer(source="lote_set", many=True, read_only=True)
+    imagen_360_preview_url = serializers.SerializerMethodField()
+    viewer_360_config = serializers.SerializerMethodField()
 
     class Meta:
         model = Proyecto
@@ -219,12 +282,20 @@ class ProyectoDetalleMapaSerializer(serializers.ModelSerializer):
             "idproyecto",
             "nombreproyecto",
             "imagen_360_url",
+            "imagen_360_preview_url",
             "dron_lat",
             "dron_lng",
             "dron_altitud",
+            "viewer_360_config",
             "puntos",
             "lotes",
         )
+
+    def get_imagen_360_preview_url(self, obj):
+        return _project_360_preview_url(obj.imagen_360_url)
+
+    def get_viewer_360_config(self, obj):
+        return _project_360_config_payload(obj)
 
 
 class InmobiliariaRegistroSerializer(serializers.ModelSerializer):
@@ -441,6 +512,9 @@ class ProyectoMapaMarkerSerializer(serializers.ModelSerializer):
 
 
 class ProyectoMapaDetalleSerializer(serializers.ModelSerializer):
+    imagen_360_preview_url = serializers.SerializerMethodField()
+    viewer_360_config = serializers.SerializerMethodField()
+
     class Meta:
         model = Proyecto
         fields = (
@@ -470,10 +544,18 @@ class ProyectoMapaDetalleSerializer(serializers.ModelSerializer):
             "bandera",
             "pais",
             "imagen_360_url",
+            "imagen_360_preview_url",
             "dron_lat",
             "dron_lng",
             "dron_altitud",
+            "viewer_360_config",
         )
+
+    def get_imagen_360_preview_url(self, obj):
+        return _project_360_preview_url(obj.imagen_360_url)
+
+    def get_viewer_360_config(self, obj):
+        return _project_360_config_payload(obj)
 
 
 class LoteMapaDetalleSerializer(serializers.ModelSerializer):

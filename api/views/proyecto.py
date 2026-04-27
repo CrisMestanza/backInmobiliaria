@@ -1,10 +1,15 @@
 import json
+import os
+from io import BytesIO
 from typing import Any, TypedDict, cast
 
 from django.conf import settings
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.views.decorators.cache import cache_page
+from PIL import Image, ImageOps
 from rest_framework import status
 from rest_framework.decorators import (
     api_view,
@@ -175,6 +180,120 @@ def _validate_project_points(
             status=status.HTTP_400_BAD_REQUEST,
         )
     return points, None
+
+
+PROJECT_360_WEB_SIZE = (4096, 2048)
+PROJECT_360_PREVIEW_SIZE = (1024, 512)
+PROJECT_360_QUALITY = 78
+
+
+def _project_360_base_dir(proyecto: Proyecto) -> str:
+    inmo_id = getattr(proyecto.idinmobiliaria, "idinmobiliaria", None) or "sin-inmo"
+    return f"inmobiliarias/{inmo_id}/proyectos/{proyecto.idproyecto}/dron"
+
+
+def _project_360_relative_url(base_dir: str, filename: str) -> str:
+    return f"/media/{base_dir}/{filename}"
+
+
+def _project_360_config_relative_url(base_dir: str) -> str:
+    return _project_360_relative_url(base_dir, "360_config.json")
+
+
+def _project_360_preview_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    root, ext = os.path.splitext(str(value))
+    return f"{root}_preview{ext or '.jpg'}"
+
+
+def _render_project_360_variant(uploaded_file, size: tuple[int, int]) -> bytes:
+    uploaded_file.seek(0)
+    with Image.open(uploaded_file) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode not in ("RGB",):
+            img = img.convert("RGB")
+        rendered = Image.new("RGB", size, (8, 12, 18))
+        fitted = ImageOps.contain(img, size, method=Image.Resampling.LANCZOS)
+        offset = (
+            (size[0] - fitted.width) // 2,
+            (size[1] - fitted.height) // 2,
+        )
+        rendered.paste(fitted, offset)
+        output = BytesIO()
+        rendered.save(
+            output,
+            format="JPEG",
+            quality=PROJECT_360_QUALITY,
+            optimize=True,
+            progressive=True,
+        )
+        return output.getvalue()
+
+
+def _save_project_360_variants(proyecto: Proyecto, uploaded_file) -> tuple[str, str]:
+    base_dir = _project_360_base_dir(proyecto)
+    web_rel = _project_360_relative_url(base_dir, "360_web.jpg")
+    preview_rel = _project_360_relative_url(base_dir, "360_web_preview.jpg")
+    web_storage_path = web_rel.replace("/media/", "", 1)
+    preview_storage_path = preview_rel.replace("/media/", "", 1)
+
+    web_bytes = _render_project_360_variant(uploaded_file, PROJECT_360_WEB_SIZE)
+    preview_bytes = _render_project_360_variant(uploaded_file, PROJECT_360_PREVIEW_SIZE)
+
+    if default_storage.exists(web_storage_path):
+        default_storage.delete(web_storage_path)
+    if default_storage.exists(preview_storage_path):
+        default_storage.delete(preview_storage_path)
+
+    default_storage.save(web_storage_path, ContentFile(web_bytes))
+    default_storage.save(preview_storage_path, ContentFile(preview_bytes))
+    return web_rel, preview_rel
+
+
+def _save_project_360_config(proyecto: Proyecto, config_payload: dict[str, Any] | None) -> str | None:
+    proyecto.viewer_360_config = json.dumps(config_payload, ensure_ascii=False) if config_payload else None
+    if not proyecto.imagen_360_url:
+        return None
+    base_dir = _project_360_base_dir(proyecto)
+    rel_url = _project_360_config_relative_url(base_dir)
+    storage_path = rel_url.replace("/media/", "", 1)
+    if not config_payload:
+        if default_storage.exists(storage_path):
+            default_storage.delete(storage_path)
+        return rel_url
+    payload = json.dumps(config_payload, ensure_ascii=False)
+    if default_storage.exists(storage_path):
+        default_storage.delete(storage_path)
+    default_storage.save(storage_path, ContentFile(payload.encode("utf-8")))
+    return rel_url
+
+
+def _load_project_360_config(proyecto: Proyecto) -> dict[str, Any] | None:
+    if getattr(proyecto, "viewer_360_config", None):
+        try:
+            return json.loads(proyecto.viewer_360_config)
+        except Exception:
+            pass
+    if not proyecto.imagen_360_url:
+        return None
+    base_dir = _project_360_base_dir(proyecto)
+    rel_url = _project_360_config_relative_url(base_dir)
+    storage_path = rel_url.replace("/media/", "", 1)
+    if not default_storage.exists(storage_path):
+        return None
+    try:
+        with default_storage.open(storage_path, "r") as handle:
+            return json.load(handle)
+    except Exception:
+        return None
+
+
+def _collect_project_360_upload(request):
+    for key in ("imagen_360", "imagen360", "imagen_360_file", "panorama_360"):
+        if request.FILES.get(key):
+            return request.FILES.get(key)
+    return None
 
 
 @cache_page(60)
@@ -423,6 +542,9 @@ def registerProyecto(request):
         "pais": request.data.get("pais", ""),
         "bandera": request.data.get("bandera", ""),
         "moneda": request.data.get("moneda", ""),
+        "dron_lat": request.data.get("dron_lat") or None,
+        "dron_lng": request.data.get("dron_lng") or None,
+        "dron_altitud": request.data.get("dron_altitud") or 80,
     }
 
     serializer = ProyectoSerializer(data=data)
@@ -431,6 +553,16 @@ def registerProyecto(request):
 
     with transaction.atomic():
         proyecto = cast(Proyecto, serializer.save())
+        image360_preview_url = None
+        image360_upload = _collect_project_360_upload(request)
+        if image360_upload:
+            validate_uploaded_image(image360_upload)
+            web_url, image360_preview_url = _save_project_360_variants(
+                proyecto,
+                image360_upload,
+            )
+            proyecto.imagen_360_url = web_url
+            proyecto.save(update_fields=["imagen_360_url"])
 
         puntos_bulk: list[PuntosProyecto] = []
         for idx, punto in enumerate(puntos_data):
@@ -476,6 +608,7 @@ def registerProyecto(request):
     return Response(
         {
             "proyecto": serializer.data,
+            "imagen_360_preview_url": image360_preview_url,
             "puntos_creados": len(puntos_bulk),
             "imagenes_creadas": nuevas_imagenes,
         },
@@ -578,6 +711,7 @@ def updateProyecto(request, idproyecto):
             image_paths_to_delete: list[str] = []
             nuevas_imagenes: list[dict[str, Any]] = []
             serializer.save()
+            image360_preview_url = None
             if "puntos" in request.data:
                 puntos_data_raw = _parse_json_list(request.data.get("puntos", []))
                 puntos_data, puntos_error = _validate_project_points(puntos_data_raw)
@@ -624,6 +758,37 @@ def updateProyecto(request, idproyecto):
                         "idproyecto": proyecto.idproyecto,
                     }
                 )
+            image360_upload = _collect_project_360_upload(request)
+            if image360_upload:
+                validate_uploaded_image(image360_upload)
+                if proyecto.imagen_360_url:
+                    current_ext = os.path.splitext(str(proyecto.imagen_360_url))[1] or ".jpg"
+                    current_preview = f"{os.path.splitext(str(proyecto.imagen_360_url))[0]}_preview{current_ext}"
+                    image_paths_to_delete.extend(
+                        [
+                            str(proyecto.imagen_360_url),
+                            current_preview,
+                        ]
+                    )
+                web_url, image360_preview_url = _save_project_360_variants(
+                    proyecto,
+                    image360_upload,
+                )
+                proyecto.imagen_360_url = web_url
+                if "dron_lat" in request.data:
+                    proyecto.dron_lat = request.data.get("dron_lat") or None
+                if "dron_lng" in request.data:
+                    proyecto.dron_lng = request.data.get("dron_lng") or None
+                if "dron_altitud" in request.data:
+                    proyecto.dron_altitud = request.data.get("dron_altitud") or 80
+                proyecto.save(
+                    update_fields=[
+                        "imagen_360_url",
+                        "dron_lat",
+                        "dron_lng",
+                        "dron_altitud",
+                    ]
+                )
             if image_paths_to_delete:
                 transaction.on_commit(
                     lambda paths=image_paths_to_delete: delete_files_and_empty_dirs(paths)
@@ -639,11 +804,100 @@ def updateProyecto(request, idproyecto):
         return Response(
             {
                 **serializer.data,
+                "imagen_360_preview_url": image360_preview_url,
                 "imagenes_creadas": nuevas_imagenes,
             },
             status=status.HTTP_200_OK,
         )
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET", "PUT"])
+@authentication_classes([CustomJWTAuthentication])
+@permission_classes([IsAuthenticated, IsOwnerOfProyecto])
+def proyecto_360_editor(request, idproyecto):
+    try:
+        proyecto = Proyecto.objects.select_related("idinmobiliaria").get(idproyecto=idproyecto)
+    except Proyecto.DoesNotExist:
+        return Response(
+            {"error": "Proyecto no encontrado"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "GET":
+        return Response(
+            {
+                "idproyecto": proyecto.idproyecto,
+                "imagen_360_url": proyecto.imagen_360_url,
+                "imagen_360_preview_url": _project_360_preview_url(proyecto.imagen_360_url),
+                "dron_lat": proyecto.dron_lat,
+                "dron_lng": proyecto.dron_lng,
+                "dron_altitud": proyecto.dron_altitud,
+                "viewer_360_config": _load_project_360_config(proyecto),
+            }
+        )
+
+    with transaction.atomic():
+        image_paths_to_delete: list[str] = []
+        image360_upload = _collect_project_360_upload(request)
+        next_image_url = proyecto.imagen_360_url
+
+        if image360_upload:
+            validate_uploaded_image(image360_upload)
+            if proyecto.imagen_360_url:
+                current_ext = os.path.splitext(str(proyecto.imagen_360_url))[1] or ".jpg"
+                current_preview = f"{os.path.splitext(str(proyecto.imagen_360_url))[0]}_preview{current_ext}"
+                current_config = f"{os.path.splitext(str(proyecto.imagen_360_url))[0]}_config.json"
+                image_paths_to_delete.extend(
+                    [
+                        str(proyecto.imagen_360_url),
+                        current_preview,
+                        current_config,
+                    ]
+                )
+            web_url, _preview_url = _save_project_360_variants(proyecto, image360_upload)
+            proyecto.imagen_360_url = web_url
+            next_image_url = web_url
+
+        if "dron_lat" in request.data:
+            proyecto.dron_lat = request.data.get("dron_lat") or None
+        if "dron_lng" in request.data:
+            proyecto.dron_lng = request.data.get("dron_lng") or None
+        if "dron_altitud" in request.data:
+            proyecto.dron_altitud = request.data.get("dron_altitud") or 80
+
+        viewer_config_raw = request.data.get("viewer_360_config")
+        if viewer_config_raw is not None:
+            try:
+                viewer_config = json.loads(viewer_config_raw) if isinstance(viewer_config_raw, str) else viewer_config_raw
+            except json.JSONDecodeError:
+                return Response(
+                    {"error": "viewer_360_config debe ser JSON válido"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            _save_project_360_config(proyecto, viewer_config if isinstance(viewer_config, dict) else None)
+
+        proyecto.save(
+            update_fields=["imagen_360_url", "dron_lat", "dron_lng", "dron_altitud", "viewer_360_config"]
+        )
+
+        if image_paths_to_delete:
+            transaction.on_commit(
+                lambda paths=image_paths_to_delete: delete_files_and_empty_dirs(paths)
+            )
+
+    return Response(
+        {
+            "idproyecto": proyecto.idproyecto,
+            "imagen_360_url": next_image_url,
+            "imagen_360_preview_url": _project_360_preview_url(next_image_url),
+            "dron_lat": proyecto.dron_lat,
+            "dron_lng": proyecto.dron_lng,
+            "dron_altitud": proyecto.dron_altitud,
+            "viewer_360_config": _load_project_360_config(proyecto),
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(["DELETE"])
@@ -692,6 +946,14 @@ def deleteProyecto(request, idproyecto):
                 for path in (imagenes_lote_paths + imagenes_proyecto_paths)
                 if path
             ]
+            if proyecto.imagen_360_url:
+                file_paths.extend(
+                    [
+                        str(proyecto.imagen_360_url),
+                        _project_360_preview_url(proyecto.imagen_360_url),
+                        f"{os.path.splitext(str(proyecto.imagen_360_url))[0]}_config.json",
+                    ]
+                )
 
             # 🔹 Eliminar primero relaciones dependientes
             ClickProyectos.objects.filter(idproyecto=idproyecto).delete()
