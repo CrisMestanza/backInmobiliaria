@@ -156,6 +156,16 @@ def _parse_optional_bool(value: Any) -> bool | None:
     return None
 
 
+PROYECTO_UTILITY_FIELDS = (
+    "agua",
+    "desague",
+    "luz",
+    "alumbrado_publico",
+    "postes_luz",
+    "veredas",
+)
+
+
 def _parse_int_list(value: Any) -> list[int]:
     if isinstance(value, str):
         try:
@@ -730,7 +740,14 @@ def updateProyecto(request, idproyecto):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    serializer = ProyectoSerializer(proyecto, data=request.data, partial=True)
+    update_data = request.data.copy()
+    for utility_field in PROYECTO_UTILITY_FIELDS:
+        if utility_field in update_data:
+            update_data[utility_field] = _parse_optional_bool(
+                update_data.get(utility_field)
+            )
+
+    serializer = ProyectoSerializer(proyecto, data=update_data, partial=True)
     if serializer.is_valid():
         with transaction.atomic():
             image_paths_to_delete: list[str] = []
