@@ -8,9 +8,32 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name="proyecto",
-            name="financing_config",
-            field=models.TextField(blank=True, null=True),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunSQL(
+                    sql="""
+                        ALTER TABLE proyecto
+                        ADD COLUMN financing_config LONGTEXT NULL;
+                    """,
+                    reverse_sql="""
+                        ALTER TABLE proyecto
+                        DROP COLUMN financing_config;
+                    """,
+                ),
+            ],
+            state_operations=[
+                migrations.CreateModel(
+                    name="Proyecto",
+                    fields=[
+                        ("idproyecto", models.AutoField(primary_key=True, serialize=False)),
+                        ("viewer_360_config", models.TextField(blank=True, null=True)),
+                        ("financing_config", models.TextField(blank=True, null=True)),
+                    ],
+                    options={
+                        "db_table": "proyecto",
+                        "managed": False,
+                    },
+                ),
+            ],
         ),
     ]
