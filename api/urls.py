@@ -9,6 +9,7 @@ from .views.proyecto import *
 from .views.usuario import *
 from .views.iconos import *
 from .views.iconosproyecto import *
+from .views.espacio import *
 from .views.bot import *
 from .views.clicks import *
 from .views.imagen360Casa import *
@@ -91,6 +92,11 @@ urlpatterns = [
     path('add_iconos_proyecto/', add_iconos_proyecto),
     path('delete_icono_proyecto/<int:idiconoproyecto>/', delete_icono_proyecto),
     path('filtroCasaProyecto/<int:idtipoinmobiliaria>', tipoProyecto),
+    path('list_tipos_espacio/', list_tipos_espacio),
+    path('list_espacios_proyecto/<int:idproyecto>/', list_espacios_proyecto),
+    path('register_espacio/', register_espacio),
+    path('update_espacio/<int:idespacio>/', update_espacio),
+    path('delete_espacio/<int:idespacio>/', delete_espacio),
     
      # path('token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', refresh_token),
@@ -106,6 +112,8 @@ urlpatterns = [
     path('registerClickProyecto/', registerClickProyecto),
     path('registerClickContactos/', registerClickContactos),
     path('dashboard_clicks_inmobiliaria/<int:idinmobiliaria>/', dashboard_clicks_inmobiliaria),
+    path('dashboard_overview_inmobiliaria/<int:idinmobiliaria>/', dashboard_overview_inmobiliaria),
+    path('dashboard_lotes_inmobiliaria/<int:idinmobiliaria>/', dashboard_lotes_inmobiliaria),
     
     # Filtro combinados 
     path('proyectosFiltrados/', proyectos_filtrados),

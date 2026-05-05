@@ -4,7 +4,6 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.files.storage import default_storage
 import json
 import os
-from statistics import mean
 import re
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -47,6 +46,22 @@ def _project_360_config_payload(value):
     except Exception:
         return None
 
+
+def _project_financing_config_payload(value):
+    raw_value = None
+    if hasattr(value, "financing_config"):
+        raw_value = getattr(value, "financing_config", None)
+    else:
+        raw_value = value
+    if not raw_value:
+        return None
+    if isinstance(raw_value, (dict, list)):
+        return raw_value
+    try:
+        return json.loads(raw_value)
+    except Exception:
+        return None
+
 class InmobiliariaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Inmobiliaria
@@ -68,6 +83,18 @@ class ImagenesProyectoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImagenesProyecto
         fields = '__all__'
+
+
+class ImagenesMapaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Imagenes
+        fields = ("idimagenes", "imagen", "idlote")
+
+
+class ImagenesProyectoMapaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ImagenesProyecto
+        fields = ("idimagenesp", "imagenproyecto", "idproyecto")
 class TipoInmobiliariasSerializer(serializers.ModelSerializer):
     class Meta:
         model = TipoInmobiliaria
@@ -76,6 +103,7 @@ class TipoInmobiliariasSerializer(serializers.ModelSerializer):
 class ProyectoSerializer(serializers.ModelSerializer):
     imagen_360_preview_url = serializers.SerializerMethodField()
     viewer_360_config = serializers.SerializerMethodField()
+    financing_config = serializers.SerializerMethodField()
 
     class Meta:
         model = Proyecto
@@ -86,6 +114,9 @@ class ProyectoSerializer(serializers.ModelSerializer):
 
     def get_viewer_360_config(self, obj):
         return _project_360_config_payload(obj)
+
+    def get_financing_config(self, obj):
+        return _project_financing_config_payload(obj)
 
 class LoteSerializer(serializers.ModelSerializer):
     inmobiliaria = InmobiliariaSerializer(source='idproyecto.idinmobiliaria', read_only=True)
@@ -100,6 +131,27 @@ class IconosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Iconos
         fields = '__all__'
+
+
+class TipoEspacioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TipoEspacio
+        fields = "__all__"
+
+
+class PuntosEspacioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PuntosEspacio
+        fields = ("latitud", "longitud", "orden")
+
+
+class EspacioSerializer(serializers.ModelSerializer):
+    tipoespacio = TipoEspacioSerializer(source="idtipoespacio", read_only=True)
+    puntos = PuntosEspacioSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Espacio
+        fields = "__all__"
 
 class UsuarioSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
@@ -211,6 +263,27 @@ class LoteMapaSerializer(serializers.ModelSerializer):
         )
 
 
+class EspacioMapaSerializer(serializers.ModelSerializer):
+    puntos = PuntosEspacioSerializer(many=True, read_only=True)
+    tipoespacio = TipoEspacioSerializer(source="idtipoespacio", read_only=True)
+
+    class Meta:
+        model = Espacio
+        fields = (
+            "idespacio",
+            "nombre",
+            "descripcion",
+            "area_m2",
+            "centro_lat",
+            "centro_lng",
+            "visible_mapa",
+            "destacado",
+            "estado",
+            "tipoespacio",
+            "puntos",
+        )
+
+
 class IconoProyectoMapaSerializer(serializers.ModelSerializer):
     nombre = serializers.CharField(source="idicono.nombre", read_only=True)
     imagen = serializers.ImageField(source="idicono.imagen", read_only=True)
@@ -224,6 +297,7 @@ class ProyectoMapaSerializer(serializers.ModelSerializer):
     iconos = IconoProyectoMapaSerializer(source="iconos_proyecto", many=True, read_only=True)
     imagen_360_preview_url = serializers.SerializerMethodField()
     viewer_360_config = serializers.SerializerMethodField()
+    financing_config = serializers.SerializerMethodField()
 
     class Meta:
         model = Proyecto
@@ -260,6 +334,7 @@ class ProyectoMapaSerializer(serializers.ModelSerializer):
             "dron_lng",
             "dron_altitud",
             "viewer_360_config",
+            "financing_config",
             "iconos",
         )
 
@@ -269,12 +344,16 @@ class ProyectoMapaSerializer(serializers.ModelSerializer):
     def get_viewer_360_config(self, obj):
         return _project_360_config_payload(obj)
 
+    def get_financing_config(self, obj):
+        return _project_financing_config_payload(obj)
+
 
 class ProyectoDetalleMapaSerializer(serializers.ModelSerializer):
     puntos = PuntosProyectoMapaSerializer(many=True, read_only=True)
     lotes = LoteMapaSerializer(source="lote_set", many=True, read_only=True)
     imagen_360_preview_url = serializers.SerializerMethodField()
     viewer_360_config = serializers.SerializerMethodField()
+    financing_config = serializers.SerializerMethodField()
 
     class Meta:
         model = Proyecto
@@ -287,6 +366,7 @@ class ProyectoDetalleMapaSerializer(serializers.ModelSerializer):
             "dron_lng",
             "dron_altitud",
             "viewer_360_config",
+            "financing_config",
             "puntos",
             "lotes",
         )
@@ -296,6 +376,9 @@ class ProyectoDetalleMapaSerializer(serializers.ModelSerializer):
 
     def get_viewer_360_config(self, obj):
         return _project_360_config_payload(obj)
+
+    def get_financing_config(self, obj):
+        return _project_financing_config_payload(obj)
 
 
 class InmobiliariaRegistroSerializer(serializers.ModelSerializer):
@@ -426,53 +509,7 @@ class CustomTokenObtainPairSerializer(serializers.Serializer):
         return token
 
 
-def _polygon_centroid(points):
-    """
-    Calcula el centroide del polígono usando fórmula estándar.
-    Si no se puede (área 0), hace fallback a promedio de coordenadas.
-    """
-    coords = []
-    for p in points:
-        try:
-            lat = float(p.latitud)
-            lng = float(p.longitud)
-            coords.append((lng, lat))
-        except (TypeError, ValueError):
-            continue
-
-    if not coords:
-        return None
-    if len(coords) < 3:
-        return {"latitud": coords[0][1], "longitud": coords[0][0]}
-
-    area2 = 0.0
-    cx = 0.0
-    cy = 0.0
-    n = len(coords)
-    for i in range(n):
-        x1, y1 = coords[i]
-        x2, y2 = coords[(i + 1) % n]
-        cross = x1 * y2 - x2 * y1
-        area2 += cross
-        cx += (x1 + x2) * cross
-        cy += (y1 + y2) * cross
-
-    if abs(area2) < 1e-12:
-        return {
-            "latitud": mean([y for _, y in coords]),
-            "longitud": mean([x for x, _ in coords]),
-        }
-
-    area = area2 / 2.0
-    return {
-        "latitud": cy / (6.0 * area),
-        "longitud": cx / (6.0 * area),
-    }
-
-
 class ProyectoMapaMarkerSerializer(serializers.ModelSerializer):
-    latitud = serializers.SerializerMethodField()
-    longitud = serializers.SerializerMethodField()
     visible = serializers.SerializerMethodField()
 
     class Meta:
@@ -487,33 +524,26 @@ class ProyectoMapaMarkerSerializer(serializers.ModelSerializer):
             "idtipoinmobiliaria",
         )
 
-    def _get_center(self, obj):
-        points = getattr(obj, "puntos_prefetch", None)
-        if points:
-            center = _polygon_centroid(points)
-            if center:
-                return center
-        try:
-            return {
-                "latitud": float(obj.latitud),
-                "longitud": float(obj.longitud),
-            }
-        except (TypeError, ValueError):
-            return {"latitud": None, "longitud": None}
-
-    def get_latitud(self, obj):
-        return self._get_center(obj).get("latitud")
-
-    def get_longitud(self, obj):
-        return self._get_center(obj).get("longitud")
-
     def get_visible(self, obj):
         return int(getattr(obj, "estado", 0) or 0) == 1
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        try:
+            data["latitud"] = float(instance.latitud)
+        except (TypeError, ValueError):
+            data["latitud"] = None
+        try:
+            data["longitud"] = float(instance.longitud)
+        except (TypeError, ValueError):
+            data["longitud"] = None
+        return data
 
 
 class ProyectoMapaDetalleSerializer(serializers.ModelSerializer):
     imagen_360_preview_url = serializers.SerializerMethodField()
     viewer_360_config = serializers.SerializerMethodField()
+    financing_config = serializers.SerializerMethodField()
 
     class Meta:
         model = Proyecto
@@ -549,6 +579,7 @@ class ProyectoMapaDetalleSerializer(serializers.ModelSerializer):
             "dron_lng",
             "dron_altitud",
             "viewer_360_config",
+            "financing_config",
         )
 
     def get_imagen_360_preview_url(self, obj):
@@ -556,6 +587,9 @@ class ProyectoMapaDetalleSerializer(serializers.ModelSerializer):
 
     def get_viewer_360_config(self, obj):
         return _project_360_config_payload(obj)
+
+    def get_financing_config(self, obj):
+        return _project_financing_config_payload(obj)
 
 
 class LoteMapaDetalleSerializer(serializers.ModelSerializer):

@@ -153,6 +153,7 @@ class Proyecto(models.Model):
     moneda = models.CharField(max_length=60, blank=True, null=True)
     imagen_360_url = models.CharField(max_length=500, blank=True, null=True)
     viewer_360_config = models.TextField(blank=True, null=True)
+    financing_config = models.TextField(blank=True, null=True)
     dron_lat = models.DecimalField(max_digits=10, decimal_places=8, blank=True, null=True)
     dron_lng = models.DecimalField(max_digits=11, decimal_places=8, blank=True, null=True)
     dron_altitud = models.IntegerField(blank=True, null=True, default=80)
@@ -214,6 +215,67 @@ class IconoProyecto(models.Model):
     class Meta:
         managed = False
         db_table = "iconoproyecto"
+
+
+class TipoEspacio(models.Model):
+    idtipoespacio = models.AutoField(primary_key=True)
+    nombre = models.CharField(max_length=80)
+    slug = models.CharField(max_length=80, unique=True)
+    color = models.CharField(max_length=20, blank=True, null=True)
+    icono = models.CharField(max_length=255, blank=True, null=True)
+    orden_visual = models.IntegerField(default=0)
+    estado = models.IntegerField(blank=True, null=True, default=1)
+
+    class Meta:
+        managed = True
+        db_table = "tipo_espacio"
+
+
+class Espacio(models.Model):
+    idespacio = models.AutoField(primary_key=True)
+    idproyecto = models.ForeignKey(
+        Proyecto,
+        on_delete=models.CASCADE,
+        db_column="idproyecto",
+        related_name="espacios",
+    )
+    idtipoespacio = models.ForeignKey(
+        TipoEspacio,
+        on_delete=models.PROTECT,
+        db_column="idtipoespacio",
+        related_name="espacios",
+    )
+    nombre = models.CharField(max_length=120)
+    descripcion = models.CharField(max_length=500, blank=True, null=True)
+    area_m2 = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
+    centro_lat = models.DecimalField(max_digits=10, decimal_places=8, blank=True, null=True)
+    centro_lng = models.DecimalField(max_digits=11, decimal_places=8, blank=True, null=True)
+    visible_mapa = models.IntegerField(blank=True, null=True, default=1)
+    destacado = models.IntegerField(blank=True, null=True, default=0)
+    estado = models.IntegerField(blank=True, null=True, default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "espacio"
+
+
+class PuntosEspacio(models.Model):
+    idpuntoespacio = models.AutoField(primary_key=True)
+    idespacio = models.ForeignKey(
+        Espacio,
+        on_delete=models.CASCADE,
+        db_column="idespacio",
+        related_name="puntos",
+    )
+    latitud = models.FloatField()
+    longitud = models.FloatField()
+    orden = models.IntegerField()
+
+    class Meta:
+        managed = True
+        db_table = "puntosespacio"
 
 
 class TipoInmobiliaria(models.Model):

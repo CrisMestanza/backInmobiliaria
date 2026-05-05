@@ -137,6 +137,7 @@ REST_FRAMEWORK = {
         "login": _get_env("DRF_THROTTLE_LOGIN", "10/minute"),
         "refresh": _get_env("DRF_THROTTLE_REFRESH", "20/minute"),
         "clicks": _get_env("DRF_THROTTLE_CLICKS", "60/minute"),
+        "map_public": _get_env("DRF_THROTTLE_MAP_PUBLIC", "180/minute"),
         "register": _get_env("DRF_THROTTLE_REGISTER", "5/hour"),
         "recovery_request": _get_env("DRF_THROTTLE_RECOVERY_REQUEST", "5/hour"),
         "recovery_verify": _get_env("DRF_THROTTLE_RECOVERY_VERIFY", "15/hour"),

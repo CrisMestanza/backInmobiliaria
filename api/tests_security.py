@@ -12,8 +12,10 @@ from rest_framework_simplejwt.exceptions import InvalidToken
 
 from .authentication import CustomJWTAuthentication
 from .security_uploads import build_secure_image_name, validate_uploaded_image
-from .throttling import LoginRateThrottle
+from .throttling import LoginRateThrottle, PublicMapRateThrottle
 from .views.inmobiliaria import updateInmobiliaria
+from .views.espacio import list_espacios_proyecto
+from .views.proyecto import list_proyectos_mapa
 from .views.usuario import updateUsuario, listUsuarios
 from .serializers import InmobiliariaRegistroSerializer
 
@@ -72,6 +74,23 @@ class PermissionSecurityTests(SimpleTestCase):
         request = APIRequestFactory().put("/api/updateInmobiliaria/1/", {"nombreinmobiliaria": "x"}, format="json")
         force_authenticate(request, user=_auth_user(1))
         response = updateInmobiliaria(request, idinmobiliaria=1)
+        self.assertEqual(response.status_code, 403)
+
+    def test_list_espacios_hidden_requires_authentication(self):
+        request = APIRequestFactory().get(
+            "/api/list_espacios_proyecto/10/?include_hidden=1"
+        )
+        request.user = SimpleNamespace(is_authenticated=False)
+        response = list_espacios_proyecto(request, idproyecto=10)
+        self.assertEqual(response.status_code, 401)
+
+    @patch("api.views.espacio.is_project_owned_by_user", return_value=False)
+    def test_list_espacios_hidden_requires_owner(self, _mock_owner):
+        request = APIRequestFactory().get(
+            "/api/list_espacios_proyecto/10/?include_hidden=1"
+        )
+        force_authenticate(request, user=_auth_user(1))
+        response = list_espacios_proyecto(request, idproyecto=10)
         self.assertEqual(response.status_code, 403)
 
 
@@ -142,6 +161,48 @@ class ThrottleSecurityTests(SimpleTestCase):
 
         self.assertEqual(r1.status_code, 400)
         self.assertEqual(r2.status_code, 400)
+        self.assertEqual(r3.status_code, 429)
+
+    @override_settings(
+        SECURE_SSL_REDIRECT=False,
+        REST_FRAMEWORK={
+            "DEFAULT_AUTHENTICATION_CLASSES": ("api.authentication.CustomJWTAuthentication",),
+            "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+            "DEFAULT_THROTTLE_CLASSES": (
+                "rest_framework.throttling.AnonRateThrottle",
+                "rest_framework.throttling.UserRateThrottle",
+                "rest_framework.throttling.ScopedRateThrottle",
+            ),
+            "DEFAULT_THROTTLE_RATES": {
+                "anon": "100/hour",
+                "user": "1000/hour",
+                "login": "10/minute",
+                "refresh": "20/minute",
+                "clicks": "60/minute",
+                "map_public": "2/minute",
+            },
+        },
+    )
+    @patch("api.views.proyecto.ProyectoMapaMarkerSerializer")
+    @patch("api.views.proyecto.Proyecto.objects.filter")
+    def test_public_map_rate_limit(self, mock_filter, serializer_cls):
+        queryset = MagicMock()
+        queryset.distinct.return_value = queryset
+        queryset.only.return_value = queryset
+        queryset.filter.return_value = queryset
+        mock_filter.return_value = queryset
+        serializer_cls.return_value.data = []
+
+        cache.clear()
+        factory = APIRequestFactory()
+        PublicMapRateThrottle.rate = "2/minute"
+
+        r1 = list_proyectos_mapa(factory.get("/api/list_proyectos_mapa/"))
+        r2 = list_proyectos_mapa(factory.get("/api/list_proyectos_mapa/"))
+        r3 = list_proyectos_mapa(factory.get("/api/list_proyectos_mapa/"))
+
+        self.assertEqual(r1.status_code, 200)
+        self.assertEqual(r2.status_code, 200)
         self.assertEqual(r3.status_code, 429)
 
 

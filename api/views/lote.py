@@ -7,6 +7,7 @@ from rest_framework.decorators import (
     api_view,
     authentication_classes,
     permission_classes,
+    throttle_classes,
 )
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.permissions import AllowAny
@@ -14,10 +15,13 @@ from rest_framework.response import Response
 
 from api.authentication import CustomJWTAuthentication
 from api.audit import log_audit_event
+from api.dashboard_cache import invalidate_dashboard_cache_for_inmobiliaria
 from api.file_cleanup import delete_files_and_empty_dirs
-from api.models import Imagenes, Lote, Proyecto, Puntos, PuntosProyecto
+from api.models import Imagenes, ImagenesProyecto, Lote, Proyecto, Puntos, PuntosProyecto
 from api.security_uploads import build_unique_image_name, validate_uploaded_image
 from api.serializers import (
+    ImagenesMapaSerializer,
+    ImagenesProyectoMapaSerializer,
     ImagenesSerializer,
     LoteMapaSerializer,
     LoteMapaDetalleSerializer,
@@ -26,6 +30,7 @@ from api.serializers import (
     LoteSerializer,
     ProyectoSerializer,
 )
+from api.throttling import PublicMapRateThrottle
 from api.views.permissions import IsOwnerOfLote, IsSameInmobiliaria
 from api.views.permissions import is_project_owned_by_user
 from api.validation_utils import parse_polygon_points, polygon_area_m2
@@ -119,6 +124,7 @@ def get_lotes_con_puntos(_request, idproyecto):
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
+@throttle_classes([PublicMapRateThrottle])
 def mapa_lote_detalle(_request, idlote):
     lote = (
         Lote.objects.filter(idlote=idlote)
@@ -129,7 +135,19 @@ def mapa_lote_detalle(_request, idlote):
                 queryset=Puntos.objects.only(
                     "idlote_id", "latitud", "longitud", "orden"
                 ).order_by("orden"),
-            )
+            ),
+            Prefetch(
+                "imagenes_set",
+                queryset=Imagenes.objects.only("idimagenes", "imagen", "idlote_id"),
+            ),
+            Prefetch(
+                "idproyecto__imagenesproyecto_set",
+                queryset=ImagenesProyecto.objects.only(
+                    "idimagenesp",
+                    "imagenproyecto",
+                    "idproyecto_id",
+                ),
+            ),
         )
         .first()
     )
@@ -144,6 +162,12 @@ def mapa_lote_detalle(_request, idlote):
             "lote": LoteMapaDetalleSerializer(lote).data,
             "proyecto": ProyectoMapaDetalleSerializer(proyecto).data if proyecto else None,
             "inmobiliaria": InmobiliariaSerializer(inmobiliaria).data if inmobiliaria else None,
+            "imagenes_lote": ImagenesMapaSerializer(
+                getattr(lote, "imagenes_set").all(), many=True
+            ).data,
+            "imagenes_proyecto": ImagenesProyectoMapaSerializer(
+                getattr(proyecto, "imagenesproyecto_set").all(), many=True
+            ).data if proyecto else [],
         }
     )
 
@@ -302,6 +326,9 @@ def registerLote(request):
                 target_id=lote.idlote,
                 detail={"puntos": len(puntos_bulk), "imagenes": len(nuevas_imagenes)},
             )
+            invalidate_dashboard_cache_for_inmobiliaria(
+                getattr(getattr(lote, "idproyecto", None), "idinmobiliaria_id", None)
+            )
             return Response(
                 {
                     "lote": serializer.data,
@@ -419,6 +446,9 @@ def updateLote(request, idlote):
             target_id=idlote,
             detail={"puntos": len(puntos_bulk), "imagenes": len(nuevas_imagenes)},
         )
+        invalidate_dashboard_cache_for_inmobiliaria(
+            getattr(getattr(lote, "idproyecto", None), "idinmobiliaria_id", None)
+        )
         return Response(
             {
                 "message": "Lote actualizado correctamente",
@@ -478,6 +508,9 @@ def updateLoteVendido(request, idlote):
             target_resource="lote",
             target_id=idlote,
             detail={"vendido": vendido},
+        )
+        invalidate_dashboard_cache_for_inmobiliaria(
+            getattr(getattr(lote, "idproyecto", None), "idinmobiliaria_id", None)
         )
         return Response(
             {
@@ -569,6 +602,9 @@ def deleteLote(request, idlote):
                 "puntos_eliminados": puntos_borrados[0],
                 "imagenes_eliminadas": imagenes_borradas[0],
             },
+        )
+        invalidate_dashboard_cache_for_inmobiliaria(
+            getattr(getattr(lote, "idproyecto", None), "idinmobiliaria_id", None)
         )
         return Response(
             {
@@ -789,6 +825,15 @@ def registerLotesMasivo(request):
                 "total_errores": len(errores),
             },
         )
+        if lotes_creados:
+            first_lote = lotes_creados[0].get("lote", {})
+            project_id = first_lote.get("idproyecto")
+            proyecto = Proyecto.objects.filter(idproyecto=project_id).only(
+                "idinmobiliaria_id"
+            ).first()
+            invalidate_dashboard_cache_for_inmobiliaria(
+                getattr(proyecto, "idinmobiliaria_id", None)
+            )
         return Response(response_data, status=status_code)
 
     except Exception as e:

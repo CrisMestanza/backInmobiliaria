@@ -24,6 +24,10 @@ class ClickRateThrottle(BaseIPThrottle):
     scope = "clicks"
 
 
+class PublicMapRateThrottle(BaseIPThrottle):
+    scope = "map_public"
+
+
 class RegisterRateThrottle(BaseIPThrottle):
     scope = "register"
 

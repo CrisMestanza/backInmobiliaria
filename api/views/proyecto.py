@@ -15,16 +15,19 @@ from rest_framework.decorators import (
     api_view,
     authentication_classes,
     permission_classes,
+    throttle_classes,
 )
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from api.authentication import CustomJWTAuthentication
 from api.audit import log_audit_event
+from api.dashboard_cache import invalidate_dashboard_cache_for_inmobiliaria
 from api.file_cleanup import delete_files_and_empty_dirs
 from api.models import (
     ClickProyectos,
     ClicksContactos,
+    Espacio,
     IconoProyecto,
     Imagenes,
     ImagenesProyecto,
@@ -32,9 +35,12 @@ from api.models import (
     Lote,
     Proyecto,
     Puntos,
+    PuntosEspacio,
     PuntosProyecto,
 )
 from api.serializers import (
+    EspacioMapaSerializer,
+    ImagenesProyectoMapaSerializer,
     IconoProyectoSerializer,
     InmobiliariaSerializer,
     LoteMapaDetalleSerializer,
@@ -73,7 +79,9 @@ PROYECTO_MAP_ONLY_FIELDS = (
     "azotea",
     "ancho",
     "largo",
+    "financing_config",
 )
+from api.throttling import PublicMapRateThrottle
 
 PROYECTO_MAP_MARKER_FIELDS = (
     "idproyecto",
@@ -83,6 +91,7 @@ PROYECTO_MAP_MARKER_FIELDS = (
     "estado",
     "idtipoinmobiliaria_id",
     "publico_mapa",
+    "financing_config",
 )
 
 LOTE_MAP_DETAIL_FIELDS = (
@@ -116,6 +125,35 @@ LOTE_MAP_DETAIL_FIELDS = (
 class ProjectPoint(TypedDict):
     latitud: float
     longitud: float
+
+
+def _project_centroid(points: list[ProjectPoint]) -> tuple[float | None, float | None]:
+    if not points:
+        return None, None
+    if len(points) < 3:
+        first = points[0]
+        return first["latitud"], first["longitud"]
+
+    coords = [(p["longitud"], p["latitud"]) for p in points]
+    area2 = 0.0
+    cx = 0.0
+    cy = 0.0
+
+    for i in range(len(coords)):
+        x1, y1 = coords[i]
+        x2, y2 = coords[(i + 1) % len(coords)]
+        cross = x1 * y2 - x2 * y1
+        area2 += cross
+        cx += (x1 + x2) * cross
+        cy += (y1 + y2) * cross
+
+    if abs(area2) < 1e-12:
+        avg_lat = sum(p["latitud"] for p in points) / len(points)
+        avg_lng = sum(p["longitud"] for p in points) / len(points)
+        return avg_lat, avg_lng
+
+    area = area2 / 2.0
+    return cy / (6.0 * area), cx / (6.0 * area)
 
 
 def _ensure_activated_user(request):
@@ -296,9 +334,30 @@ def _collect_project_360_upload(request):
     return None
 
 
+def _normalize_json_payload(raw_value, field_name):
+    if raw_value in (None, "", []):
+        return None, None
+    if isinstance(raw_value, (dict, list)):
+        return json.dumps(raw_value, ensure_ascii=False), None
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return None, Response(
+            {field_name: ["Debe ser un JSON válido."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not isinstance(parsed, (dict, list)):
+        return None, Response(
+            {field_name: ["Debe ser un objeto o lista JSON válido."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return json.dumps(parsed, ensure_ascii=False), None
+
+
 @cache_page(60)
 @api_view(["GET"])
 @permission_classes([AllowAny])
+@throttle_classes([PublicMapRateThrottle])
 def list_proyectos_mapa(request):
     """
     Endpoint ligero para marcadores del mapa.
@@ -312,18 +371,6 @@ def list_proyectos_mapa(request):
         Proyecto.objects.filter(estado=1, puntos__isnull=False)
         .distinct()
         .only(*PROYECTO_MAP_MARKER_FIELDS)
-        .prefetch_related(
-            Prefetch(
-                "puntos",
-                queryset=PuntosProyecto.objects.only(
-                    "idproyecto_id",
-                    "latitud",
-                    "longitud",
-                    "orden",
-                ).order_by("orden"),
-                to_attr="puntos_prefetch",
-            )
-        )
     )
 
     if tipo:
@@ -349,6 +396,7 @@ def list_proyectos_mapa(request):
 @cache_page(30)
 @api_view(["GET"])
 @permission_classes([AllowAny])
+@throttle_classes([PublicMapRateThrottle])
 def mapa_proyecto_detalle(_request, idproyecto):
     """
     Endpoint agregado: devuelve en una sola llamada
@@ -392,6 +440,27 @@ def mapa_proyecto_detalle(_request, idproyecto):
                     "idicono__estado",
                 ),
             ),
+            Prefetch(
+                "espacios",
+                queryset=Espacio.objects.filter(estado=1, visible_mapa=1)
+                .select_related("idtipoespacio")
+                .prefetch_related(
+                    Prefetch(
+                        "puntos",
+                        queryset=PuntosEspacio.objects.only(
+                            "idespacio_id", "latitud", "longitud", "orden"
+                        ).order_by("orden"),
+                    )
+                ),
+            ),
+            Prefetch(
+                "imagenesproyecto_set",
+                queryset=ImagenesProyecto.objects.only(
+                    "idimagenesp",
+                    "imagenproyecto",
+                    "idproyecto_id",
+                ),
+            ),
         )
         .first()
     )
@@ -416,12 +485,19 @@ def mapa_proyecto_detalle(_request, idproyecto):
             "iconos": IconoProyectoSerializer(
                 getattr(proyecto, "iconos_proyecto").all(), many=True
             ).data,
+            "espacios": EspacioMapaSerializer(
+                getattr(proyecto, "espacios").all(), many=True
+            ).data,
+            "imagenes_proyecto": ImagenesProyectoMapaSerializer(
+                getattr(proyecto, "imagenesproyecto_set").all(), many=True
+            ).data,
         }
     )
 
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
+@throttle_classes([PublicMapRateThrottle])
 def mapa_proyecto_share(_request, idproyecto):
     """
     Endpoint rápido para compartir proyecto:
@@ -436,7 +512,29 @@ def mapa_proyecto_share(_request, idproyecto):
                 queryset=PuntosProyecto.objects.only(
                     "idproyecto_id", "latitud", "longitud", "orden"
                 ).order_by("orden"),
-            )
+            ),
+            Prefetch(
+                "espacios",
+                queryset=Espacio.objects.filter(estado=1, visible_mapa=1)
+                .select_related("idtipoespacio")
+                .prefetch_related(
+                    Prefetch(
+                        "puntos",
+                        queryset=PuntosEspacio.objects.only(
+                            "idespacio_id", "latitud", "longitud", "orden"
+                        ).order_by("orden"),
+                    )
+                )
+                .order_by("idtipoespacio__orden_visual", "nombre"),
+            ),
+            Prefetch(
+                "imagenesproyecto_set",
+                queryset=ImagenesProyecto.objects.only(
+                    "idimagenesp",
+                    "imagenproyecto",
+                    "idproyecto_id",
+                ),
+            ),
         )
         .first()
     )
@@ -454,6 +552,12 @@ def mapa_proyecto_share(_request, idproyecto):
             else None,
             "puntos": PuntosProyectoMapaSerializer(
                 getattr(proyecto, "puntos").all(), many=True
+            ).data,
+            "espacios": EspacioMapaSerializer(
+                getattr(proyecto, "espacios").all(), many=True
+            ).data,
+            "imagenes_proyecto": ImagenesProyectoMapaSerializer(
+                getattr(proyecto, "imagenesproyecto_set").all(), many=True
             ).data,
         }
     )
@@ -515,11 +619,12 @@ def registerProyecto(request):
     puntos_data, puntos_error = _validate_project_points(puntos_data_raw)
     if puntos_error:
         return puntos_error
+    centroid_lat, centroid_lng = _project_centroid(puntos_data)
 
     data = {
         "nombreproyecto": request.data.get("nombreproyecto"),
-        "longitud": request.data.get("longitud"),
-        "latitud": request.data.get("latitud"),
+        "longitud": centroid_lng,
+        "latitud": centroid_lat,
         "idinmobiliaria": inmobiliaria_usuario.idinmobiliaria,
         "descripcion": request.data.get("descripcion"),
         "idtipoinmobiliaria": idtipoinmobiliaria,
@@ -546,6 +651,13 @@ def registerProyecto(request):
         "dron_lng": request.data.get("dron_lng") or None,
         "dron_altitud": request.data.get("dron_altitud") or 80,
     }
+    financing_config, financing_error = _normalize_json_payload(
+        request.data.get("financing_config"),
+        "financing_config",
+    )
+    if financing_error:
+        return financing_error
+    data["financing_config"] = financing_config
 
     serializer = ProyectoSerializer(data=data)
     if not serializer.is_valid():
@@ -605,6 +717,7 @@ def registerProyecto(request):
         target_id=proyecto.idproyecto,
         detail={"puntos": len(puntos_bulk), "imagenes": len(nuevas_imagenes)},
     )
+    invalidate_dashboard_cache_for_inmobiliaria(inmobiliaria_usuario.idinmobiliaria)
     return Response(
         {
             "proyecto": serializer.data,
@@ -705,7 +818,17 @@ def updateProyecto(request, idproyecto):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    serializer = ProyectoSerializer(proyecto, data=request.data, partial=True)
+    request_data = request.data.copy()
+    if "financing_config" in request_data:
+        financing_config, financing_error = _normalize_json_payload(
+            request_data.get("financing_config"),
+            "financing_config",
+        )
+        if financing_error:
+            return financing_error
+        request_data["financing_config"] = financing_config
+
+    serializer = ProyectoSerializer(proyecto, data=request_data, partial=True)
     if serializer.is_valid():
         with transaction.atomic():
             image_paths_to_delete: list[str] = []
@@ -718,6 +841,10 @@ def updateProyecto(request, idproyecto):
                 if puntos_error:
                     transaction.set_rollback(True)
                     return puntos_error
+                centroid_lat, centroid_lng = _project_centroid(puntos_data)
+                proyecto.latitud = centroid_lat
+                proyecto.longitud = centroid_lng
+                proyecto.save(update_fields=["latitud", "longitud"])
                 PuntosProyecto.objects.filter(idproyecto=proyecto.idproyecto).delete()
                 PuntosProyecto.objects.bulk_create(
                     [
@@ -800,6 +927,9 @@ def updateProyecto(request, idproyecto):
             success=True,
             target_resource="proyecto",
             target_id=idproyecto,
+        )
+        invalidate_dashboard_cache_for_inmobiliaria(
+            getattr(proyecto_inmobiliaria, "idinmobiliaria", None)
         )
         return Response(
             {
@@ -973,6 +1103,9 @@ def deleteProyecto(request, idproyecto):
             success=True,
             target_resource="proyecto",
             target_id=idproyecto,
+        )
+        invalidate_dashboard_cache_for_inmobiliaria(
+            getattr(proyecto_inmobiliaria, "idinmobiliaria", None)
         )
         return Response(
             {"message": "Proyecto y todas sus relaciones eliminadas correctamente."},
