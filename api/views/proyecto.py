@@ -79,6 +79,12 @@ PROYECTO_MAP_ONLY_FIELDS = (
     "azotea",
     "ancho",
     "largo",
+    "agua",
+    "desague",
+    "luz",
+    "alumbrado_publico",
+    "postes_luz",
+    "veredas",
     "financing_config",
 )
 from api.throttling import PublicMapRateThrottle
@@ -173,6 +179,29 @@ def _parse_json_list(value: Any) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             return []
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _parse_optional_bool(value: Any) -> bool | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "si", "sí", "yes"}:
+        return True
+    if normalized in {"0", "false", "no"}:
+        return False
+    return None
+
+
+PROYECTO_UTILITY_FIELDS = (
+    "agua",
+    "desague",
+    "luz",
+    "alumbrado_publico",
+    "postes_luz",
+    "veredas",
+)
 
 
 def _parse_int_list(value: Any) -> list[int]:
@@ -647,6 +676,12 @@ def registerProyecto(request):
         "pais": request.data.get("pais", ""),
         "bandera": request.data.get("bandera", ""),
         "moneda": request.data.get("moneda", ""),
+        "agua": _parse_optional_bool(request.data.get("agua")),
+        "desague": _parse_optional_bool(request.data.get("desague")),
+        "luz": _parse_optional_bool(request.data.get("luz")),
+        "alumbrado_publico": _parse_optional_bool(request.data.get("alumbrado_publico")),
+        "postes_luz": _parse_optional_bool(request.data.get("postes_luz")),
+        "veredas": _parse_optional_bool(request.data.get("veredas")),
         "dron_lat": request.data.get("dron_lat") or None,
         "dron_lng": request.data.get("dron_lng") or None,
         "dron_altitud": request.data.get("dron_altitud") or 80,
@@ -827,6 +862,12 @@ def updateProyecto(request, idproyecto):
         if financing_error:
             return financing_error
         request_data["financing_config"] = financing_config
+
+    for utility_field in PROYECTO_UTILITY_FIELDS:
+        if utility_field in request_data:
+            request_data[utility_field] = _parse_optional_bool(
+                request_data.get(utility_field)
+            )
 
     serializer = ProyectoSerializer(proyecto, data=request_data, partial=True)
     if serializer.is_valid():
