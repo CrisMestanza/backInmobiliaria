@@ -17,11 +17,20 @@ from api.validation_utils import parse_polygon_points, polygon_area_m2
 from api.views.permissions import is_project_owned_by_user
 
 
+def _normalize_coordinate_precision(value: float | None, decimal_places: int = 8):
+    if value is None:
+        return None
+    return round(float(value), decimal_places)
+
+
 def _espacio_centroid(points: list[dict[str, float]]) -> tuple[float | None, float | None]:
     if not points:
         return None, None
     if len(points) < 3:
-        return points[0]["latitud"], points[0]["longitud"]
+        return (
+            _normalize_coordinate_precision(points[0]["latitud"]),
+            _normalize_coordinate_precision(points[0]["longitud"]),
+        )
 
     coords = [(p["longitud"], p["latitud"]) for p in points]
     area2 = 0.0
@@ -39,10 +48,16 @@ def _espacio_centroid(points: list[dict[str, float]]) -> tuple[float | None, flo
     if abs(area2) < 1e-12:
         avg_lat = sum(p["latitud"] for p in points) / len(points)
         avg_lng = sum(p["longitud"] for p in points) / len(points)
-        return avg_lat, avg_lng
+        return (
+            _normalize_coordinate_precision(avg_lat),
+            _normalize_coordinate_precision(avg_lng),
+        )
 
     area = area2 / 2.0
-    return cy / (6.0 * area), cx / (6.0 * area)
+    return (
+        _normalize_coordinate_precision(cy / (6.0 * area)),
+        _normalize_coordinate_precision(cx / (6.0 * area)),
+    )
 
 
 def _validate_espacio_points(raw_points):

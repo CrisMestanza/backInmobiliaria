@@ -700,6 +700,9 @@ def registerProyecto(request):
 
     with transaction.atomic():
         proyecto = cast(Proyecto, serializer.save())
+        if financing_config is not None:
+            proyecto.financing_config = financing_config
+            proyecto.save(update_fields=["financing_config"])
         image360_preview_url = None
         image360_upload = _collect_project_360_upload(request)
         if image360_upload:
@@ -875,6 +878,9 @@ def updateProyecto(request, idproyecto):
             image_paths_to_delete: list[str] = []
             nuevas_imagenes: list[dict[str, Any]] = []
             serializer.save()
+            if "financing_config" in request_data:
+                proyecto.financing_config = request_data.get("financing_config")
+                proyecto.save(update_fields=["financing_config"])
             image360_preview_url = None
             if "puntos" in request.data:
                 puntos_data_raw = _parse_json_list(request.data.get("puntos", []))
