@@ -13,6 +13,8 @@ from .views.espacio import *
 from .views.bot import *
 from .views.clicks import *
 from .views.imagen360Casa import *
+from .views.share import og_image_lote, og_image_proyecto
+from .views.error_reporting import frontend_error_report
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 urlpatterns = [
@@ -33,6 +35,7 @@ urlpatterns = [
     path('list_imagen/<int:idlote>', list_imagen),
     path('list_imagen_proyecto/<int:idproyecto>', list_imagen_proyecto),
     path('mapa/lote_detalle/<int:idlote>/', mapa_lote_detalle),
+    path('og-image/lote/<int:idlote>/', og_image_lote),
     path('delete_imagen/<int:idimagenes>/', delete_imagen),
     path('delete_imagen_proyecto/<int:idimagenesp>/', delete_imagen_proyecto),
     
@@ -54,6 +57,7 @@ urlpatterns = [
     path('mapa/proyectos/', list_proyectos_mapa),
     path('mapa/proyecto_detalle/<int:idproyecto>/', mapa_proyecto_detalle),
     path('mapa/proyecto_share/<int:idproyecto>/', mapa_proyecto_share),
+    path('og-image/proyecto/<int:idproyecto>/', og_image_proyecto),
     path('registerProyecto/', registerProyecto),
     path('getProyectoInmo/<int:idinmobiliaria>', getProyecto),
     path('proyecto_360_editor/<int:idproyecto>/', proyecto_360_editor),
@@ -78,6 +82,7 @@ urlpatterns = [
     path('activation/confirm/', confirm_account_activation),
     path('activation/resend/', resend_account_activation),
     path('logout/', logout),
+    path('frontend-error-report/', frontend_error_report),
     
     #Iconos
     path('listIconos/', listIconos),

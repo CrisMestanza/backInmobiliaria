@@ -19,6 +19,7 @@ from django.urls import path,include
 from django.conf import settings
 from django.conf.urls.static import static
 from django.http import HttpResponse
+from api.views.share import share_lote, share_proyecto
 
 def home(request):
     """1. Función de vista para la página de inicio."""
@@ -27,6 +28,8 @@ def home(request):
 urlpatterns = [
     path('', home),
     path('api/', include('api.urls')),
+    path('share/lote/<int:idlote>/', share_lote),
+    path('share/proyecto/<int:idproyecto>/', share_proyecto),
 ]
 
 if settings.DEBUG:

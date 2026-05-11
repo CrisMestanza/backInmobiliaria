@@ -143,6 +143,7 @@ REST_FRAMEWORK = {
         "recovery_verify": _get_env("DRF_THROTTLE_RECOVERY_VERIFY", "15/hour"),
         "recovery_reset": _get_env("DRF_THROTTLE_RECOVERY_RESET", "8/hour"),
         "activation_resend": _get_env("DRF_THROTTLE_ACTIVATION_RESEND", "5/hour"),
+        "frontend_error_report": _get_env("DRF_THROTTLE_FRONTEND_ERROR_REPORT", "30/minute"),
     },
 }
 
@@ -237,6 +238,10 @@ ACCOUNT_ACTIVATION_FRONTEND_URL = _get_env(
     "ACCOUNT_ACTIVATION_FRONTEND_URL",
     "https://www.geohabita.com/activar-cuenta",
 )
+SHARE_FRONTEND_BASE_URL = _get_env(
+    "SHARE_FRONTEND_BASE_URL",
+    "https://www.geohabita.com",
+)
 ACCOUNT_PENDING_DELETE_DAYS = int(_get_env("ACCOUNT_PENDING_DELETE_DAYS", "7"))
 
 EMAIL_BACKEND = _get_env("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
@@ -248,6 +253,10 @@ EMAIL_USE_TLS = _get_bool("EMAIL_USE_TLS", True)
 EMAIL_USE_SSL = _get_bool("EMAIL_USE_SSL", False)
 DEFAULT_FROM_EMAIL = _get_env("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@geohabita.com")
 EMAIL_TIMEOUT = int(_get_env("EMAIL_TIMEOUT", "20"))
+
+TELEGRAM_ERROR_ALERTS_ENABLED = _get_bool("TELEGRAM_ERROR_ALERTS_ENABLED", False)
+TELEGRAM_BOT_TOKEN = _get_env("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = _get_env("TELEGRAM_CHAT_ID", "")
 
 # ============================================
 # CLAVE PRIMARIA POR DEFECTO
@@ -275,6 +284,11 @@ LOGGING = {
             "propagate": False,
         },
         "api.audit": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "api.error_reporting": {
             "handlers": ["console"],
             "level": "INFO",
             "propagate": False,

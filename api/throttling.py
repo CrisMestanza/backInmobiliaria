@@ -46,3 +46,7 @@ class RecoveryResetRateThrottle(BaseIPThrottle):
 
 class ActivationResendRateThrottle(BaseIPThrottle):
     scope = "activation_resend"
+
+
+class FrontendErrorReportThrottle(BaseIPThrottle):
+    scope = "frontend_error_report"

@@ -41,7 +41,6 @@ def list_iconos_disponibles(_request):
         return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-@cache_page(120)
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def list_iconos_proyecto(_request, idproyecto):
