@@ -59,3 +59,4 @@ class FrontendErrorReportViewTests(SimpleTestCase):
         self.assertIn("/mapa/1", posted_message)
         self.assertIn("[redacted]", posted_message)
         self.assertIn("Intento de registrar proyecto", posted_message)
+        self.assertNotIn("body_error", posted_message)

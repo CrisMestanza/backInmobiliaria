@@ -126,6 +126,9 @@ def _uploaded_files_summary(request):
 def _request_body(request):
     try:
         content_type = (request.content_type or "").lower()
+        parsed_data = getattr(request, "data", None)
+        if parsed_data not in (None, "") and not hasattr(parsed_data, "lists"):
+            return sanitize_value(parsed_data)
         if "multipart/form-data" in content_type:
             form_data = dict(request.POST.lists())
             return {
@@ -134,6 +137,10 @@ def _request_body(request):
             }
         if "application/x-www-form-urlencoded" in content_type:
             return sanitize_value(dict(request.POST.lists()))
+        if parsed_data not in (None, ""):
+            if hasattr(parsed_data, "lists"):
+                return sanitize_value(dict(parsed_data.lists()))
+            return sanitize_value(parsed_data)
 
         raw_body = request.body or b""
         if not raw_body:

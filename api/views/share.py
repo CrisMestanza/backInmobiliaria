@@ -19,10 +19,27 @@ OG_WIDTH = 1200
 OG_HEIGHT = 630
 DEFAULT_FRONTEND_BASE_URL = "https://www.geohabita.com"
 DEFAULT_SITE_NAME = "GeoHabita"
+SOCIAL_CRAWLER_TOKENS = (
+    "whatsapp",
+    "facebookexternalhit",
+    "facebot",
+    "twitterbot",
+    "linkedinbot",
+    "slackbot",
+    "telegrambot",
+    "discordbot",
+    "skypeuripreview",
+    "googlebot",
+)
 
 
 def _frontend_base_url() -> str:
     return getattr(settings, "SHARE_FRONTEND_BASE_URL", DEFAULT_FRONTEND_BASE_URL).rstrip("/")
+
+
+def _is_social_crawler(request) -> bool:
+    user_agent = str(request.META.get("HTTP_USER_AGENT", "")).lower()
+    return any(token in user_agent for token in SOCIAL_CRAWLER_TOKENS)
 
 
 def _clean_text(value: Any, fallback: str = "") -> str:
@@ -185,6 +202,7 @@ def _share_context_for_project(request, project: Proyecto) -> dict[str, Any]:
     inmo = getattr(project, "idinmobiliaria", None)
     inmo_id = getattr(inmo, "idinmobiliaria", None)
     frontend_url = f"{_frontend_base_url()}/mapa/{inmo_id}?proyecto={project.idproyecto}"
+    share_url = request.build_absolute_uri(f"/share/proyecto/{project.idproyecto}/")
     og_image_url = request.build_absolute_uri(f"/api/og-image/proyecto/{project.idproyecto}/")
     title = _clean_text(project.nombreproyecto, "Proyecto")
     price = _format_money(project.precio, _clean_text(project.moneda, "S/"))
@@ -197,13 +215,17 @@ def _share_context_for_project(request, project: Proyecto) -> dict[str, Any]:
         "og_title": f"{title} | {DEFAULT_SITE_NAME}",
         "og_description": description,
         "og_image": og_image_url,
-        "canonical_url": frontend_url,
+        "og_image_secure_url": og_image_url,
+        "canonical_url": share_url,
+        "og_url": share_url,
         "redirect_url": frontend_url,
         "site_name": DEFAULT_SITE_NAME,
         "headline": title,
         "price_label": price,
         "eyebrow": "Proyecto",
         "summary": description,
+        "image_alt": f"Vista previa de {title} en GeoHabita",
+        "auto_redirect": not _is_social_crawler(request),
     }
 
 
@@ -215,6 +237,7 @@ def _share_context_for_lote(request, lote: Lote) -> dict[str, Any]:
     frontend_url = (
         f"{_frontend_base_url()}/mapa/{inmo_id}?proyecto={project_id}&lote={lote.idlote}"
     )
+    share_url = request.build_absolute_uri(f"/share/lote/{lote.idlote}/")
     og_image_url = request.build_absolute_uri(f"/api/og-image/lote/{lote.idlote}/")
     title = _clean_text(lote.nombre, "Lote")
     project_name = _clean_text(getattr(project, "nombreproyecto", ""), "Proyecto")
@@ -231,13 +254,17 @@ def _share_context_for_lote(request, lote: Lote) -> dict[str, Any]:
         "og_title": f"{title} | {project_name}",
         "og_description": description,
         "og_image": og_image_url,
-        "canonical_url": frontend_url,
+        "og_image_secure_url": og_image_url,
+        "canonical_url": share_url,
+        "og_url": share_url,
         "redirect_url": frontend_url,
         "site_name": DEFAULT_SITE_NAME,
         "headline": title,
         "price_label": price,
         "eyebrow": project_name,
         "summary": description,
+        "image_alt": f"Vista previa de {title} en GeoHabita",
+        "auto_redirect": not _is_social_crawler(request),
     }
 
 
@@ -293,9 +320,23 @@ def og_image_lote(_request, idlote: int) -> HttpResponse:
 
 def share_proyecto(request, idproyecto: int) -> HttpResponse:
     project = _get_project_or_404(idproyecto)
-    return render(request, "api/share_redirect.html", _share_context_for_project(request, project))
+    response = render(
+        request,
+        "api/share_redirect.html",
+        _share_context_for_project(request, project),
+    )
+    response["Cache-Control"] = "public, max-age=300"
+    response["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    return response
 
 
 def share_lote(request, idlote: int) -> HttpResponse:
     lote = _get_lote_or_404(idlote)
-    return render(request, "api/share_redirect.html", _share_context_for_lote(request, lote))
+    response = render(
+        request,
+        "api/share_redirect.html",
+        _share_context_for_lote(request, lote),
+    )
+    response["Cache-Control"] = "public, max-age=300"
+    response["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    return response
