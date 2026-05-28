@@ -7,6 +7,7 @@ from html import escape
 
 import requests
 from django.conf import settings
+from django.http.request import RawPostDataException
 
 from api.request_utils import get_client_ip
 
@@ -126,7 +127,10 @@ def _uploaded_files_summary(request):
 def _request_body(request):
     try:
         content_type = (request.content_type or "").lower()
-        parsed_data = getattr(request, "data", None)
+        try:
+            parsed_data = getattr(request, "data", None)
+        except Exception:
+            parsed_data = None
         if parsed_data not in (None, "") and not hasattr(parsed_data, "lists"):
             return sanitize_value(parsed_data)
         if "multipart/form-data" in content_type:
@@ -142,7 +146,10 @@ def _request_body(request):
                 return sanitize_value(dict(parsed_data.lists()))
             return sanitize_value(parsed_data)
 
-        raw_body = request.body or b""
+        try:
+            raw_body = request.body or b""
+        except RawPostDataException:
+            return None
         if not raw_body:
             return None
         if len(raw_body) > MAX_BODY_BYTES:

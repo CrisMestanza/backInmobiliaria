@@ -30,7 +30,7 @@ from api.serializers import (
     PuntosProyectoSerializer,
     PuntosSerializer,
 )
-from api.throttling import RegisterRateThrottle
+from api.throttling import PublicListRateThrottle, RegisterRateThrottle
 from api.validation_utils import (
     inmobiliaria_phone_exists_normalized,
     normalize_phone,
@@ -99,10 +99,19 @@ def _create_activation_token(usuario, request):
     return raw_token
 
 
+def _public_cap(request, default=500, maximum=1000):
+    try:
+        limit = int(request.GET.get("limit", default))
+    except (TypeError, ValueError):
+        limit = default
+    return min(max(1, limit), maximum)
+
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
-def list_inmobiliarias(_request):
-    inmobiliarias = Inmobiliaria.objects.all()
+@throttle_classes([PublicListRateThrottle])
+def list_inmobiliarias(request):
+    inmobiliarias = Inmobiliaria.objects.all()[: _public_cap(request)]
     serializer = InmobiliariaSerializer(inmobiliarias, many=True)
     return Response(serializer.data)
 
@@ -242,7 +251,6 @@ def registrar_inmobiliaria(request):
         target_resource="inmobiliaria",
         detail=serializer.errors,
     )
-    print("❌ Errores:", serializer.errors)
     return Response(serializer.errors, status=400)
 
 
@@ -279,7 +287,18 @@ def updateInmobiliaria(request, idinmobiliaria):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    serializer = InmobiliariaSerializer(inmobiliaria, data=request.data, partial=True)
+    allowed_fields = {
+        "nombreinmobiliaria",
+        "facebook",
+        "whatsapp",
+        "tiktok",
+        "pagina",
+        "descripcion",
+        "telefono",
+        "correo",
+    }
+    payload = {key: request.data.get(key) for key in allowed_fields if key in request.data}
+    serializer = InmobiliariaSerializer(inmobiliaria, data=payload, partial=True)
     if serializer.is_valid():
         serializer.save()
         log_audit_event(

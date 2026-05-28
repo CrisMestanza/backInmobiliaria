@@ -72,6 +72,7 @@ mypy_extensions==1.1.0
 mysqlclient==2.2.7
 pymysql==1.1.1
 numpy==2.2.6
+opencv-python-headless==4.12.0.88
 oauthlib==3.3.1
 onnxruntime==1.23.1
 openai==2.5.0
@@ -98,6 +99,7 @@ pydantic-settings==2.11.0
 pydantic_core==2.41.4
 Pygments==2.19.2
 PyJWT==2.10.1
+PyMuPDF==1.26.5
 PyPika==0.48.9
 pyproject_hooks==1.2.0
 pyreadline3==3.5.4

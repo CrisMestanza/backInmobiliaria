@@ -1,13 +1,50 @@
-from rest_framework.decorators import api_view, permission_classes, throttle_classes, parser_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes, throttle_classes, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from django.conf import settings
 from django.db import transaction
 import json
 from api.models import *
 from api.serializers import *
+from api.authentication import CustomJWTAuthentication
+from api.security_uploads import build_unique_image_name, validate_uploaded_image
+from api.throttling import PublicMapRateThrottle, Upload360RateThrottle
+from api.upload_limits import enforce_file_batch_limits
+from api.views.permissions import is_project_owned_by_user
+
+
+def _generic_error(status_code=500):
+    return Response({"error": "No se pudo procesar la solicitud."}, status=status_code)
+
+
+def _ensure_project_owner(request, project_id):
+    if not project_id or not is_project_owned_by_user(project_id, request.user):
+        return Response(
+            {"error": "No tienes permisos para modificar este tour 360."},
+            status=403,
+        )
+    return None
+
+
+def _validate_360_files(files):
+    files = enforce_file_batch_limits(
+        files,
+        max_files_setting="MAX_360_UPLOAD_FILES",
+        max_total_mb_setting="MAX_360_UPLOAD_TOTAL_MB",
+        default_max_files=20,
+        default_total_mb=80,
+    )
+    for uploaded in files:
+        validate_uploaded_image(uploaded)
+        uploaded.name = build_unique_image_name(uploaded.name)
+    return files
+
+
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@authentication_classes([CustomJWTAuthentication])
+@permission_classes([IsAuthenticated])
+@throttle_classes([Upload360RateThrottle])
 @parser_classes([MultiPartParser, FormParser])
 def guardar_tour_360_completo(request):
     """
@@ -34,12 +71,17 @@ def guardar_tour_360_completo(request):
 
     if not id_proyecto:
         return Response({"error": "idproyecto es requerido"}, status=400)
+    permission_error = _ensure_project_owner(request, id_proyecto)
+    if permission_error:
+        return permission_error
 
     proyecto_instancia = Proyecto.objects.filter(idproyecto=id_proyecto).first()
     if not proyecto_instancia:
         return Response({"error": "Proyecto no encontrado"}, status=404)
 
     lote_instancia = Lote.objects.filter(idlote=id_lote).first() if id_lote else None
+    if lote_instancia and lote_instancia.idproyecto_id != proyecto_instancia.idproyecto:
+        return Response({"error": "El lote no pertenece al proyecto."}, status=400)
 
     if len(nombres) != len(archivos):
         return Response({"error": "La cantidad de nombres e imagenes no coinciden"}, status=400)
@@ -54,6 +96,8 @@ def guardar_tour_360_completo(request):
 
     if not isinstance(conexiones, list):
         return Response({"error": "conexiones debe ser una lista"}, status=400)
+    if len(conexiones) > int(getattr(settings, "MAX_360_CONNECTIONS_PER_REQUEST", 200)):
+        return Response({"error": "Demasiadas conexiones 360 en una solicitud."}, status=400)
 
     overlays_2d_payload = None
     if overlays_2d_raw:
@@ -63,6 +107,7 @@ def guardar_tour_360_completo(request):
             return Response({"error": "overlays_2d debe ser un JSON valido"}, status=400)
 
     try:
+        archivos = _validate_360_files(archivos)
         with transaction.atomic():
             draft_to_real_id = {}
             imagenes_creadas = []
@@ -159,12 +204,13 @@ def guardar_tour_360_completo(request):
         }, status=201)
 
     except Exception as e:
-        return Response({"error": str(e)}, status=500)
+        return _generic_error()
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
-# @throttle_classes([ClickRateThrottle]) # Asegurate de que ClickRateThrottle este bien definido
+@authentication_classes([CustomJWTAuthentication])
+@permission_classes([IsAuthenticated])
+@throttle_classes([Upload360RateThrottle])
 @parser_classes([MultiPartParser, FormParser])
 def guardar_imagenes_360_multiple(request):
     # 1. Obtener listas de datos
@@ -173,6 +219,9 @@ def guardar_imagenes_360_multiple(request):
     
     id_proyecto = request.data.get('idproyecto')
     id_lote = request.data.get('idlote')
+    permission_error = _ensure_project_owner(request, id_proyecto)
+    if permission_error:
+        return permission_error
 
     # Validación de paridad (Debe haber un nombre por cada imagen)
     if not archivos:
@@ -184,10 +233,13 @@ def guardar_imagenes_360_multiple(request):
     # Buscar instancias una sola vez fuera del bucle para optimizar
     proyecto_instancia = Proyecto.objects.filter(idproyecto=id_proyecto).first() if id_proyecto else None
     lote_instancia = Lote.objects.filter(idlote=id_lote).first() if id_lote else None
+    if lote_instancia and proyecto_instancia and lote_instancia.idproyecto_id != proyecto_instancia.idproyecto:
+        return Response({"error": "El lote no pertenece al proyecto."}, status=400)
 
     resultados = []
     
     try:
+        archivos = _validate_360_files(archivos)
         # 2. Iterar y crear registros
         for i in range(len(archivos)):
             nueva_imagen = Imagen360.objects.create(
@@ -208,11 +260,12 @@ def guardar_imagenes_360_multiple(request):
         }, status=201)
 
     except Exception as e:
-        return Response({"error": str(e)}, status=500)
+        return _generic_error()
     
 
 @api_view(['GET']) # Permitimos GET para que sea fácil de probar
 @permission_classes([AllowAny])
+@throttle_classes([PublicMapRateThrottle])
 def get_imagenes_360_multiple(request, idproyecto):
     # 1. Obtenemos todas las imágenes filtradas por el ID del proyecto
     imagenes = Imagen360.objects.filter(idproyecto=idproyecto)
@@ -225,7 +278,9 @@ def get_imagenes_360_multiple(request, idproyecto):
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@authentication_classes([CustomJWTAuthentication])
+@permission_classes([IsAuthenticated])
+@throttle_classes([Upload360RateThrottle])
 @parser_classes([MultiPartParser, FormParser])
 def agregar_punto_recorrido(request):
     try:
@@ -237,9 +292,16 @@ def agregar_punto_recorrido(request):
         id_proyecto = request.data.get('idproyecto')
         id_lote = request.data.get('idlote')
         archivo = request.FILES.get('imagen')
+        permission_error = _ensure_project_owner(request, id_proyecto)
+        if permission_error:
+            return permission_error
 
         proyecto = Proyecto.objects.get(idproyecto=id_proyecto)
         lote = Lote.objects.filter(idlote=id_lote).first() if id_lote else None
+        if lote and lote.idproyecto_id != proyecto.idproyecto:
+            return Response({"error": "El lote no pertenece al proyecto."}, status=400)
+        if archivo:
+            _validate_360_files([archivo])
 
         # 1. Crear nueva imagen
         nueva_img = Imagen360.objects.create(
@@ -266,16 +328,25 @@ def agregar_punto_recorrido(request):
         }, status=201)
 
     except Exception as e:
-        return Response({"error": str(e)}, status=500)   
+        return _generic_error()
     
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@authentication_classes([CustomJWTAuthentication])
+@permission_classes([IsAuthenticated])
+@throttle_classes([Upload360RateThrottle])
 def conectar_puntos_360(request):
     try:
         id_origen = request.data.get('id_origen')
         id_destino = request.data.get('id_destino')
         yaw = request.data.get('yaw')
         pitch = request.data.get('pitch')
+        origin = Imagen360.objects.select_related("idproyecto").filter(id_imagen=id_origen).first()
+        destination = Imagen360.objects.select_related("idproyecto").filter(id_imagen=id_destino).first()
+        if not origin or not destination or origin.idproyecto_id != destination.idproyecto_id:
+            return Response({"error": "Imagenes 360 invalidas."}, status=400)
+        permission_error = _ensure_project_owner(request, origin.idproyecto_id)
+        if permission_error:
+            return permission_error
 
         Hotspot360.objects.create(
             imagen_origen_id=id_origen,
@@ -288,12 +359,13 @@ def conectar_puntos_360(request):
         return Response({"message": "ok"}, status=201)
 
     except Exception as e:
-        return Response({"error": str(e)}, status=500)
+        return _generic_error()
     
     
     
 @api_view(['GET'])
 @permission_classes([AllowAny])
+@throttle_classes([PublicMapRateThrottle])
 def get_hotspots_por_imagen(request, id_imagen):
     hotspots = Hotspot360.objects.filter(imagen_origen_id=id_imagen)
 
@@ -314,6 +386,15 @@ def get_hotspots_por_imagen(request, id_imagen):
     return Response(data)
 
 @api_view(['DELETE'])
+@authentication_classes([CustomJWTAuthentication])
+@permission_classes([IsAuthenticated])
+@throttle_classes([Upload360RateThrottle])
 def eliminar_hotspot(request, id):
-    Hotspot360.objects.filter(id_hotspot=id).delete()
+    hotspot = Hotspot360.objects.select_related("imagen_origen__idproyecto").filter(id_hotspot=id).first()
+    if not hotspot:
+        return Response({"ok": True})
+    permission_error = _ensure_project_owner(request, hotspot.imagen_origen.idproyecto_id)
+    if permission_error:
+        return permission_error
+    hotspot.delete()
     return Response({"ok": True})

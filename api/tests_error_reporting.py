@@ -1,9 +1,10 @@
+from django.http.request import RawPostDataException
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
 from rest_framework.test import APIClient
 
-from api.error_reporting import sanitize_value
+from api.error_reporting import _request_body, sanitize_value
 
 
 class ErrorReportingSanitizeTests(SimpleTestCase):
@@ -21,6 +22,27 @@ class ErrorReportingSanitizeTests(SimpleTestCase):
         self.assertIn("[redacted]", sanitized["password"])
         self.assertIn("[redacted]", sanitized["token"])
         self.assertIn("[redacted]", sanitized["nested"]["authorization"])
+
+    def test_request_body_ignores_consumed_raw_stream(self):
+        class ConsumedStreamRequest:
+            content_type = "application/json"
+            FILES = None
+            META = {}
+
+            class _EmptyPost:
+                @staticmethod
+                def lists():
+                    return []
+
+            POST = _EmptyPost()
+
+            @property
+            def body(self):
+                raise RawPostDataException(
+                    "You cannot access body after reading from request's data stream"
+                )
+
+        self.assertIsNone(_request_body(ConsumedStreamRequest()))
 
 
 @override_settings(

@@ -80,6 +80,17 @@ def _hash_activation_token(raw_token):
     return hashlib.sha256(f"{raw_token}{SECRET_KEY}".encode("utf-8")).hexdigest()
 
 
+def _hash_reset_token(raw_token):
+    return hashlib.sha256(f"reset:{raw_token}{SECRET_KEY}".encode("utf-8")).hexdigest()
+
+
+def _reset_token_matches(stored_token, raw_token):
+    if not stored_token or not raw_token:
+        return False
+    hashed = _hash_reset_token(raw_token)
+    return stored_token == hashed or stored_token == raw_token
+
+
 def _build_activation_link(user_id, raw_token):
     base_url = getattr(
         settings,
@@ -617,8 +628,8 @@ def confirm_account_activation(request):
     usuario = Usuario.objects.filter(idusuario=user_id).first()
     if not usuario:
         return Response(
-            {"message": "Cuenta no encontrada."},
-            status=status.HTTP_404_NOT_FOUND,
+            {"message": "Enlace de activación inválido."},
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
     if usuario.is_active and usuario.estado == 1:
@@ -700,7 +711,7 @@ def resend_account_activation(request):
 
     if usuario.is_active and usuario.estado == 1:
         return Response(
-            {"message": "Tu cuenta ya está activa. Puedes iniciar sesión."},
+            generic_ok,
             status=status.HTTP_200_OK,
         )
 
@@ -873,7 +884,8 @@ def recovery_verify_code(request):
         )
 
     reset_entry.verified_at = timezone.now()
-    reset_entry.reset_token = secrets.token_urlsafe(32)
+    raw_reset_token = secrets.token_urlsafe(32)
+    reset_entry.reset_token = _hash_reset_token(raw_reset_token)
     reset_entry.save(update_fields=["verified_at", "reset_token"])
     logger.info("recovery_verify_success usuario_id=%s correo=%s", usuario.idusuario, correo)
 
@@ -881,7 +893,7 @@ def recovery_verify_code(request):
     return Response(
         {
             "message": "Código verificado correctamente.",
-            "reset_token": reset_entry.reset_token,
+            "reset_token": raw_reset_token,
             **profile,
         },
         status=status.HTTP_200_OK,
@@ -915,7 +927,6 @@ def recovery_reset_password(request):
     reset_entry = (
         PasswordResetCode.objects.filter(
             idusuario=usuario,
-            reset_token=reset_token,
             used_at__isnull=True,
             verified_at__isnull=False,
         )
@@ -923,7 +934,11 @@ def recovery_reset_password(request):
         .first()
     )
 
-    if not reset_entry or reset_entry.expires_at < timezone.now():
+    if (
+        not reset_entry
+        or reset_entry.expires_at < timezone.now()
+        or not _reset_token_matches(reset_entry.reset_token, reset_token)
+    ):
         logger.warning("recovery_reset_invalid_or_expired usuario_id=%s correo=%s", usuario.idusuario, correo)
         return Response(
             {"message": "La sesión de recuperación expiró. Solicita un nuevo código."},

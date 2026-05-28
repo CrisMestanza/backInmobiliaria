@@ -23,7 +23,7 @@ from api.views.share import share_lote, share_proyecto
 
 def home(request):
     """1. Función de vista para la página de inicio."""
-    return HttpResponse("API GeoHabita funcionando v1.6")
+    return HttpResponse("API GeoHabita funcionando v2.0")
 
 urlpatterns = [
     path('', home),

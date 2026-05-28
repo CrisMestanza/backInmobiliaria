@@ -121,8 +121,8 @@ def dashboard_clicks_inmobiliaria(request, idinmobiliaria):
             }
         )
 
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
+    except Exception:
+        return Response({"error": "No se pudo obtener la información solicitada."}, status=500)
 
 
 @api_view(["GET"])
@@ -336,8 +336,8 @@ def dashboard_overview_inmobiliaria(request, idinmobiliaria):
         }
         cache.set(cache_key, payload, timeout=60)
         return Response(payload)
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
+    except Exception:
+        return Response({"error": "No se pudo obtener la información solicitada."}, status=500)
 
 
 @api_view(["GET"])
@@ -426,5 +426,5 @@ def dashboard_lotes_inmobiliaria(request, idinmobiliaria):
         cache.set(cache_key, payload, timeout=30)
         register_lotes_cache_key(idinmobiliaria, cache_key)
         return Response(payload)
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
+    except Exception:
+        return Response({"error": "No se pudo obtener la información solicitada."}, status=500)

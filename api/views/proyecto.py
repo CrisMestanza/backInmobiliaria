@@ -53,6 +53,7 @@ from api.serializers import (
 )
 from api.views.permissions import IsOwnerOfProyecto, user_inmobiliaria_id
 from api.security_uploads import build_unique_image_name, validate_uploaded_image
+from api.throttling import PublicListRateThrottle
 from api.validation_utils import parse_polygon_points, polygon_area_m2
 
 PROYECTO_MAP_ONLY_FIELDS = (
@@ -87,6 +88,14 @@ PROYECTO_MAP_ONLY_FIELDS = (
     "veredas",
     "financing_config",
 )
+
+
+def _public_cap(request, default=500, maximum=1000):
+    try:
+        limit = int(request.GET.get("limit", default))
+    except (TypeError, ValueError):
+        limit = default
+    return min(max(1, limit), maximum)
 from api.throttling import PublicMapRateThrottle
 
 PROYECTO_MAP_MARKER_FIELDS = (
@@ -594,7 +603,8 @@ def mapa_proyecto_share(_request, idproyecto):
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
-def listProyectos(_request):
+@throttle_classes([PublicListRateThrottle])
+def listProyectos(request):
     proyectos = (
         Proyecto.objects.filter(estado=1, puntos__isnull=False)
         .distinct()
@@ -614,7 +624,7 @@ def listProyectos(_request):
             )
         )
     )
-    serializer = ProyectoMapaSerializer(proyectos, many=True)
+    serializer = ProyectoMapaSerializer(proyectos[: _public_cap(request)], many=True)
     return Response(serializer.data)
 
 
@@ -856,7 +866,41 @@ def updateProyecto(request, idproyecto):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    request_data = request.data.copy()
+    allowed_update_fields = {
+        "nombreproyecto",
+        "descripcion",
+        "idtipoinmobiliaria",
+        "precio",
+        "area_total_m2",
+        "dormitorios",
+        "banos",
+        "cuartos",
+        "titulo_propiedad",
+        "cochera",
+        "cocina",
+        "sala",
+        "patio",
+        "jardin",
+        "terraza",
+        "azotea",
+        "ancho",
+        "largo",
+        "pais",
+        "bandera",
+        "moneda",
+        "agua",
+        "desague",
+        "luz",
+        "alumbrado_publico",
+        "postes_luz",
+        "veredas",
+        "dron_lat",
+        "dron_lng",
+        "dron_altitud",
+        "financing_config",
+        "publico_mapa",
+    }
+    request_data = {key: request.data.get(key) for key in allowed_update_fields if key in request.data}
     if "financing_config" in request_data:
         financing_config, financing_error = _normalize_json_payload(
             request_data.get("financing_config"),
@@ -1159,7 +1203,7 @@ def deleteProyecto(request, idproyecto):
             status=status.HTTP_200_OK,
         )
 
-    except Exception as e:
+    except Exception:
         log_audit_event(
             request,
             "proyecto_delete_failed",
@@ -1167,17 +1211,18 @@ def deleteProyecto(request, idproyecto):
             success=False,
             target_resource="proyecto",
             target_id=idproyecto,
-            detail=str(e),
+            detail="delete_failed",
         )
         return Response(
-            {"error": f"Ocurrió un error al eliminar el proyecto: {str(e)}"},
+            {"error": "No se pudo eliminar el proyecto."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
-def tipoProyecto(_request, idtipoinmobiliaria):
+@throttle_classes([PublicListRateThrottle])
+def tipoProyecto(request, idtipoinmobiliaria):
     tipo = (
         Proyecto.objects.filter(
             estado=1,
@@ -1201,24 +1246,26 @@ def tipoProyecto(_request, idtipoinmobiliaria):
             )
         )
     )
-    serializer = ProyectoMapaSerializer(tipo, many=True)
+    serializer = ProyectoMapaSerializer(tipo[: _public_cap(request)], many=True)
     return Response(serializer.data)
 
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
-def listProyectosInmobiliaria(_request, idinmobiliaria):
+@throttle_classes([PublicListRateThrottle])
+def listProyectosInmobiliaria(request, idinmobiliaria):
     proyectos = Proyecto.objects.filter(
         idinmobiliaria=idinmobiliaria,
         estado=1,
         puntos__isnull=False,
     ).distinct()
-    serializer = ProyectoSerializer(proyectos, many=True)
+    serializer = ProyectoSerializer(proyectos[: _public_cap(request)], many=True)
     return Response(serializer.data)
 
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
+@throttle_classes([PublicListRateThrottle])
 def proyectos_filtrados(request):
     tipo = request.GET.get("tipo")  # idtipoinmobiliaria
     rango = request.GET.get("rango")  # 15001-35000
@@ -1257,5 +1304,5 @@ def proyectos_filtrados(request):
         except ValueError:
             pass
 
-    serializer = ProyectoMapaSerializer(proyectos, many=True)
+    serializer = ProyectoMapaSerializer(proyectos[: _public_cap(request)], many=True)
     return Response(serializer.data)

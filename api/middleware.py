@@ -45,3 +45,17 @@ class RequestAuditLogMiddleware:
                     success=200 <= int(status_code) < 400,
                     detail={"elapsed_ms": round(elapsed_ms, 2)},
                 )
+
+
+class SecurityHeadersMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        response.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        response.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+        if str(request.path).startswith("/api/"):
+            response.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+            response.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        return response

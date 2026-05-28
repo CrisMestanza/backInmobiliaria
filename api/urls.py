@@ -13,6 +13,7 @@ from .views.espacio import *
 from .views.bot import *
 from .views.clicks import *
 from .views.imagen360Casa import *
+from .views.plan_extraction import extract_lotes_from_overlay
 from .views.share import og_image_lote, og_image_proyecto
 from .views.error_reporting import frontend_error_report
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
@@ -45,6 +46,7 @@ urlpatterns = [
     path('getLoteProyecto/<int:idproyecto>', getLote),
     path('registerLote/', registerLote),
     path('registerLotesMasivo/', registerLotesMasivo, name='register_lotes_masivo'),
+    path('extractLotesFromOverlay/', extract_lotes_from_overlay),
     path('rangoPrecio/<str:rango>', rangoPrecio),
     path('deleteLote/<int:idlote>/', deleteLote),
     path('updateLote/<int:idlote>/', updateLote),

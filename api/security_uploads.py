@@ -12,6 +12,7 @@ from rest_framework.exceptions import ValidationError
 
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png"}
+MAX_IMAGE_PIXELS = 40_000_000
 
 
 def _sanitize(value):
@@ -68,6 +69,22 @@ def _validate_real_image(uploaded_file):
         raise ValidationError("El archivo no es una imagen válida.")
 
 
+def _validate_dimensions(uploaded_file):
+    max_pixels = int(getattr(settings, "MAX_IMAGE_PIXELS", MAX_IMAGE_PIXELS))
+    uploaded_file.seek(0)
+    try:
+        with Image.open(uploaded_file) as image:
+            width, height = image.size
+            if width <= 0 or height <= 0:
+                raise ValidationError("La imagen tiene dimensiones inválidas.")
+            if width * height > max_pixels:
+                raise ValidationError("La imagen excede las dimensiones máximas permitidas.")
+    except (UnidentifiedImageError, OSError):
+        raise ValidationError("El archivo no es una imagen válida.")
+    finally:
+        uploaded_file.seek(0)
+
+
 def _scan_for_malware(uploaded_file):
     if not getattr(settings, "ANTIVIRUS_ENABLED", False):
         return
@@ -113,4 +130,5 @@ def validate_uploaded_image(uploaded_file):
     _validate_size(uploaded_file)
     _validate_mime(uploaded_file)
     _validate_real_image(uploaded_file)
+    _validate_dimensions(uploaded_file)
     _scan_for_malware(uploaded_file)

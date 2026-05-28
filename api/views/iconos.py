@@ -8,7 +8,7 @@ from api.authentication import CustomJWTAuthentication
 from api.models import Iconos
 from api.security_uploads import build_secure_image_name, validate_uploaded_image
 from api.serializers import IconosSerializer
-from api.views.permissions import user_inmobiliaria_id
+from api.views.permissions import IsSuperUser, user_inmobiliaria_id
 
 
 @api_view(["GET"])
@@ -22,7 +22,7 @@ def listIconos(_request):
 # Crear icono
 @api_view(["POST"])
 @authentication_classes([CustomJWTAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, IsSuperUser])
 def registerIcono(request):
     imagen = request.FILES.get("imagen")
     if imagen is None:
@@ -61,7 +61,7 @@ def listIconoId(_request, idiconos):
 # Actualizar icono (PUT - todo el objeto)
 @api_view(["PUT"])
 @authentication_classes([CustomJWTAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, IsSuperUser])
 def updateIcono(request, idiconos):
     try:
         icono = Iconos.objects.get(idiconos=idiconos)
@@ -92,7 +92,7 @@ def updateIcono(request, idiconos):
 # Eliminar icono (soft delete → estado = 0)
 @api_view(["PUT"])
 @authentication_classes([CustomJWTAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, IsSuperUser])
 def deleteIcono(_request, idiconos):
     try:
         icono = Iconos.objects.get(idiconos=idiconos)

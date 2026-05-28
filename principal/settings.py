@@ -28,12 +28,17 @@ def _get_bool(name, default=False):
     return str(os.getenv(name, str(default))).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _get_csv(name, default=""):
+    return tuple(item.strip() for item in _get_env(name, default).split(",") if item.strip())
+
+
 SECRET_KEY = _get_env("DJANGO_SECRET_KEY", required=True)
 DEBUG = _get_bool("DJANGO_DEBUG", False)
 
 ALLOWED_HOSTS = [h.strip() for h in _get_env("DJANGO_ALLOWED_HOSTS", "").split(",") if h.strip()]
 if "test" in sys.argv and not ALLOWED_HOSTS:
     ALLOWED_HOSTS = ["testserver", "localhost", "127.0.0.1"]
+TRUSTED_PROXY_IPS = _get_csv("DJANGO_TRUSTED_PROXY_IPS", "127.0.0.1,::1")
 
 # ============================================
 # APLICACIONES
@@ -58,7 +63,9 @@ INSTALLED_APPS = [
 # ============================================
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
+    'api.security.middleware.InternalWAFMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'api.middleware.SecurityHeadersMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -116,6 +123,14 @@ if "test" in sys.argv:
 
 AUTH_USER_MODEL = 'api.Usuario'
 
+CACHES = {
+    "default": {
+        "BACKEND": _get_env("DJANGO_CACHE_BACKEND", "django.core.cache.backends.locmem.LocMemCache"),
+        "LOCATION": _get_env("DJANGO_CACHE_LOCATION", "geohabita-security-cache"),
+        "TIMEOUT": int(_get_env("DJANGO_CACHE_TIMEOUT", "300")),
+    }
+}
+
 # ============================================
 # REST FRAMEWORK / JWT
 # ============================================
@@ -138,6 +153,9 @@ REST_FRAMEWORK = {
         "refresh": _get_env("DRF_THROTTLE_REFRESH", "20/minute"),
         "clicks": _get_env("DRF_THROTTLE_CLICKS", "60/minute"),
         "map_public": _get_env("DRF_THROTTLE_MAP_PUBLIC", "180/minute"),
+        "public_list": _get_env("DRF_THROTTLE_PUBLIC_LIST", "120/minute"),
+        "upload_360": _get_env("DRF_THROTTLE_UPLOAD_360", "20/hour"),
+        "plan_extraction": _get_env("DRF_THROTTLE_PLAN_EXTRACTION", "10/hour"),
         "register": _get_env("DRF_THROTTLE_REGISTER", "5/hour"),
         "recovery_request": _get_env("DRF_THROTTLE_RECOVERY_REQUEST", "5/hour"),
         "recovery_verify": _get_env("DRF_THROTTLE_RECOVERY_VERIFY", "15/hour"),
@@ -145,6 +163,10 @@ REST_FRAMEWORK = {
         "activation_resend": _get_env("DRF_THROTTLE_ACTIVATION_RESEND", "5/hour"),
         "frontend_error_report": _get_env("DRF_THROTTLE_FRONTEND_ERROR_REPORT", "30/minute"),
     },
+    "DEFAULT_RENDERER_CLASSES": (
+        "rest_framework.renderers.JSONRenderer",
+    ),
+    "EXCEPTION_HANDLER": "api.exception_handlers.safe_exception_handler",
 }
 
 SIMPLE_JWT = {
@@ -216,11 +238,32 @@ SECURE_REFERRER_POLICY = _get_env("DJANGO_SECURE_REFERRER_POLICY", "same-origin"
 
 # Upload hardening
 MAX_IMAGE_UPLOAD_MB = int(_get_env("MAX_IMAGE_UPLOAD_MB", "5"))
+MAX_IMAGE_PIXELS = int(_get_env("MAX_IMAGE_PIXELS", "40000000"))
+MAX_360_UPLOAD_FILES = int(_get_env("MAX_360_UPLOAD_FILES", "20"))
+MAX_360_UPLOAD_TOTAL_MB = int(_get_env("MAX_360_UPLOAD_TOTAL_MB", "80"))
+MAX_360_CONNECTIONS_PER_REQUEST = int(_get_env("MAX_360_CONNECTIONS_PER_REQUEST", "200"))
+MAX_PLAN_EXTRACTION_UPLOAD_MB = int(_get_env("MAX_PLAN_EXTRACTION_UPLOAD_MB", "15"))
 ANTIVIRUS_ENABLED = _get_bool("ANTIVIRUS_ENABLED", False)
 ANTIVIRUS_COMMAND = _get_env("ANTIVIRUS_COMMAND", "clamscan")
 ANTIVIRUS_STRICT = _get_bool("ANTIVIRUS_STRICT", False)
 DATA_UPLOAD_MAX_MEMORY_SIZE = int(_get_env("DATA_UPLOAD_MAX_MEMORY_SIZE", "10485760"))
 FILE_UPLOAD_MAX_MEMORY_SIZE = int(_get_env("FILE_UPLOAD_MAX_MEMORY_SIZE", "5242880"))
+
+SECURITY_WAF = {
+    "ENABLED": _get_bool("SECURITY_WAF_ENABLED", True),
+    "WHITELIST_IPS": _get_csv("SECURITY_WAF_WHITELIST_IPS", "127.0.0.1,::1"),
+    "API_PREFIXES": _get_csv("SECURITY_WAF_API_PREFIXES", "/api/"),
+    "RATE_LIMIT_PER_MINUTE": int(_get_env("SECURITY_WAF_RATE_LIMIT_PER_MINUTE", "180")),
+    "BURST_LIMIT_PER_10_SECONDS": int(_get_env("SECURITY_WAF_BURST_LIMIT_PER_10_SECONDS", "60")),
+    "CONCURRENT_LIMIT": int(_get_env("SECURITY_WAF_CONCURRENT_LIMIT", "12")),
+    "TEMP_BAN_MINUTES": int(_get_env("SECURITY_WAF_TEMP_BAN_MINUTES", "60")),
+    "BAN_SCORE": int(_get_env("SECURITY_WAF_BAN_SCORE", "70")),
+    "PERMANENT_SCORE": int(_get_env("SECURITY_WAF_PERMANENT_SCORE", "140")),
+    "SENSITIVE_HITS_TO_BAN": int(_get_env("SECURITY_WAF_SENSITIVE_HITS_TO_BAN", "3")),
+    "MISSING_HITS_TO_SCORE": int(_get_env("SECURITY_WAF_MISSING_HITS_TO_SCORE", "8")),
+    "BODY_INSPECTION_BYTES": int(_get_env("SECURITY_WAF_BODY_INSPECTION_BYTES", "16384")),
+    "LOG_SAMPLE_SECONDS": int(_get_env("SECURITY_WAF_LOG_SAMPLE_SECONDS", "60")),
+}
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -289,6 +332,11 @@ LOGGING = {
             "propagate": False,
         },
         "api.error_reporting": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "api.security": {
             "handlers": ["console"],
             "level": "INFO",
             "propagate": False,

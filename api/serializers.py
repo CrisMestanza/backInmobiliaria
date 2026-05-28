@@ -65,24 +65,36 @@ def _project_financing_config_payload(value):
 class InmobiliariaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Inmobiliaria
-        fields = '__all__'
+        fields = (
+            "idinmobiliaria",
+            "nombreinmobiliaria",
+            "facebook",
+            "whatsapp",
+            "tiktok",
+            "pagina",
+            "estado",
+            "descripcion",
+            "telefono",
+            "correo",
+            "idusuario",
+        )
 class PuntosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Puntos
-        fields = '__all__'
+        fields = ("idpuntos", "latitud", "longitud", "lado_metros", "estado", "orden", "idlote")
 class PuntosProyectoSerializer(serializers.ModelSerializer):
     class Meta:
         model = PuntosProyecto
-        fields = '__all__'
+        fields = ("idpunto", "latitud", "longitud", "orden", "idproyecto")
 class ImagenesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Imagenes
-        fields = '__all__'
+        fields = ("idimagenes", "imagen", "idlote")
 
 class ImagenesProyectoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImagenesProyecto
-        fields = '__all__'
+        fields = ("idimagenesp", "imagenproyecto", "idproyecto")
 
 
 class ImagenesMapaSerializer(serializers.ModelSerializer):
@@ -98,7 +110,7 @@ class ImagenesProyectoMapaSerializer(serializers.ModelSerializer):
 class TipoInmobiliariasSerializer(serializers.ModelSerializer):
     class Meta:
         model = TipoInmobiliaria
-        fields = '__all__'
+        fields = ("idtipoinmobiliaria", "nombre", "estado")
 
 class ProyectoSerializer(serializers.ModelSerializer):
     imagen_360_preview_url = serializers.SerializerMethodField()
@@ -107,7 +119,49 @@ class ProyectoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Proyecto
-        fields = '__all__'
+        fields = (
+            "idproyecto",
+            "nombreproyecto",
+            "longitud",
+            "latitud",
+            "idinmobiliaria",
+            "estado",
+            "descripcion",
+            "idtipoinmobiliaria",
+            "precio",
+            "area_total_m2",
+            "dormitorios",
+            "banos",
+            "cuartos",
+            "titulo_propiedad",
+            "cochera",
+            "cocina",
+            "sala",
+            "patio",
+            "jardin",
+            "terraza",
+            "azotea",
+            "ancho",
+            "largo",
+            "pais",
+            "bandera",
+            "moneda",
+            "agua",
+            "desague",
+            "luz",
+            "alumbrado_publico",
+            "postes_luz",
+            "veredas",
+            "imagen_360_url",
+            "imagen_360_preview_url",
+            "viewer_360_config",
+            "financing_config",
+            "dron_lat",
+            "dron_lng",
+            "dron_altitud",
+            "publico_mapa",
+        )
+        read_only_fields = ("idproyecto", "imagen_360_url", "viewer_360_config")
 
     def get_imagen_360_preview_url(self, obj):
         return _project_360_preview_url(obj.imagen_360_url)
@@ -125,18 +179,50 @@ class LoteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Lote
-        fields = '__all__'
+        fields = (
+            "idlote",
+            "nombre",
+            "descripcion",
+            "estado",
+            "latitud",
+            "longitud",
+            "idtipoinmobiliaria",
+            "precio",
+            "idproyecto",
+            "vendido",
+            "area_total_m2",
+            "dormitorios",
+            "banos",
+            "cuartos",
+            "titulo_propiedad",
+            "cochera",
+            "cocina",
+            "sala",
+            "patio",
+            "jardin",
+            "terraza",
+            "azotea",
+            "ancho",
+            "largo",
+            "pais",
+            "bandera",
+            "moneda",
+            "inmobiliaria",
+            "proyectos",
+            "tipoinmobiliaria",
+        )
+        read_only_fields = ("idlote",)
 
 class IconosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Iconos
-        fields = '__all__'
+        fields = ("idiconos", "nombre", "imagen", "estado")
 
 
 class TipoEspacioSerializer(serializers.ModelSerializer):
     class Meta:
         model = TipoEspacio
-        fields = "__all__"
+        fields = ("idtipoespacio", "nombre", "slug", "color", "icono", "orden_visual", "estado")
 
 
 class PuntosEspacioSerializer(serializers.ModelSerializer):
@@ -151,7 +237,24 @@ class EspacioSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Espacio
-        fields = "__all__"
+        fields = (
+            "idespacio",
+            "idproyecto",
+            "idtipoespacio",
+            "nombre",
+            "descripcion",
+            "area_m2",
+            "centro_lat",
+            "centro_lng",
+            "visible_mapa",
+            "destacado",
+            "estado",
+            "created_at",
+            "updated_at",
+            "tipoespacio",
+            "puntos",
+        )
+        read_only_fields = ("idespacio", "created_at", "updated_at")
 
 class UsuarioSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
@@ -215,13 +318,13 @@ class UsuarioSerializer(serializers.ModelSerializer):
 class ClickProyectosSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClickProyectos
-        fields = '__all__'
+        fields = ("idclickProyectos", "idproyecto", "fecha", "hora", "click")
 
 
 class ClicksContactosSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClicksContactos
-        fields = '__all__'
+        fields = ("idclicksContactos", "idproyecto", "dia", "hora", "click", "redSocial")
 
 
 
@@ -642,4 +745,14 @@ class LoteMapaDetalleSerializer(serializers.ModelSerializer):
 class Imagen360Serializer(serializers.ModelSerializer):
     class Meta:
         model = Imagen360
-        fields = '__all__'
+        fields = (
+            "id_imagen",
+            "nombre",
+            "imagen",
+            "idproyecto",
+            "idlote",
+            "yaw",
+            "pitch",
+            "overlays_2d",
+            "texto_ayuda",
+        )

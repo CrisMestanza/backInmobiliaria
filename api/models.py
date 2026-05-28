@@ -433,6 +433,59 @@ class ApiAuditLog(models.Model):
     class Meta:
         managed = True
         db_table = "api_audit_log"
+
+
+class BlockedIP(models.Model):
+    idblockedip = models.AutoField(primary_key=True)
+    ip_address = models.CharField(max_length=80, unique=True)
+    reason = models.CharField(max_length=255)
+    risk_score = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    is_permanent = models.BooleanField(default=False)
+    user_agent = models.CharField(max_length=500, blank=True, null=True)
+    path = models.CharField(max_length=500, blank=True, null=True)
+    expires_at = models.DateTimeField(blank=True, null=True)
+    last_seen_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "blocked_ip"
+        indexes = [
+            models.Index(fields=["ip_address", "is_active"]),
+            models.Index(fields=["expires_at", "is_active"]),
+            models.Index(fields=["risk_score"]),
+        ]
+
+    def __str__(self):
+        return f"{self.ip_address} ({self.reason})"
+
+
+class SecurityEvent(models.Model):
+    idsecurityevent = models.AutoField(primary_key=True)
+    ip_address = models.CharField(max_length=80, db_index=True)
+    method = models.CharField(max_length=10, blank=True, null=True)
+    path = models.CharField(max_length=500, blank=True, null=True)
+    user_agent = models.CharField(max_length=500, blank=True, null=True)
+    event_type = models.CharField(max_length=80, db_index=True)
+    risk_score = models.IntegerField(default=0)
+    action = models.CharField(max_length=40, default="score")
+    reason = models.CharField(max_length=255, blank=True, null=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        managed = True
+        db_table = "security_event"
+        indexes = [
+            models.Index(fields=["ip_address", "created_at"]),
+            models.Index(fields=["event_type", "created_at"]),
+            models.Index(fields=["action", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} {self.ip_address}"
         
 
 import uuid
@@ -509,3 +562,28 @@ class Hotspot360(models.Model):
     class Meta:
         managed = False # Ya que la creaste por SQL
         db_table = 'hotspots_360'
+
+
+class PlanoExtraccionCache(models.Model):
+    idplanoextraccioncache = models.AutoField(primary_key=True)
+    idproyecto = models.ForeignKey(
+        Proyecto,
+        on_delete=models.CASCADE,
+        db_column="idproyecto",
+        related_name="planos_extraccion_cache",
+    )
+    request_signature = models.CharField(max_length=64, unique=True)
+    extraction_version = models.CharField(max_length=32, default="v2_labels")
+    status = models.CharField(max_length=20, default="completed")
+    payload = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "plano_extraccion_cache"
+        indexes = [
+            models.Index(fields=["idproyecto", "updated_at"], name="plano_extr_idproye_81f9ee_idx"),
+            models.Index(fields=["request_signature"], name="plano_extr_reques_09ebf3_idx"),
+            models.Index(fields=["status"], name="plano_extr_status_e25538_idx"),
+        ]

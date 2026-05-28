@@ -30,7 +30,7 @@ from api.serializers import (
     LoteSerializer,
     ProyectoSerializer,
 )
-from api.throttling import PublicMapRateThrottle
+from api.throttling import PublicListRateThrottle, PublicMapRateThrottle
 from api.views.permissions import IsOwnerOfLote, IsSameInmobiliaria
 from api.views.permissions import is_project_owned_by_user
 from api.validation_utils import parse_polygon_points, polygon_area_m2
@@ -43,6 +43,14 @@ def _parse_json_list(value):
         except json.JSONDecodeError:
             return []
     return value if isinstance(value, list) else []
+
+
+def _public_cap(request, default=500, maximum=1000):
+    try:
+        limit = int(request.GET.get("limit", default))
+    except (TypeError, ValueError):
+        limit = default
+    return min(max(1, limit), maximum)
 
 
 def _parse_int_list(value):
@@ -177,21 +185,23 @@ def mapa_lote_detalle(_request, idlote):
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
-def list_lotes(_request):
+@throttle_classes([PublicListRateThrottle])
+def list_lotes(request):
     lotes = Lote.objects.select_related(
         "idproyecto", "idproyecto__idinmobiliaria", "idtipoinmobiliaria"
     ).all()
-    serializer = LoteSerializer(lotes, many=True)
+    serializer = LoteSerializer(lotes[: _public_cap(request)], many=True)
     return Response(serializer.data)
 
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
-def lote(_request, idproyecto):
+@throttle_classes([PublicListRateThrottle])
+def lote(request, idproyecto):
     lotes = Lote.objects.filter(idproyecto=idproyecto).select_related(
         "idproyecto", "idproyecto__idinmobiliaria", "idtipoinmobiliaria"
     )
-    serializer = LoteSerializer(lotes, many=True)
+    serializer = LoteSerializer(lotes[: _public_cap(request)], many=True)
     return Response(serializer.data)
 
 
@@ -366,8 +376,36 @@ def updateLote(request, idlote):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Actualizar datos principales
-        serializer = LoteSerializer(lote, data=request.data, partial=True)
+        allowed_update_fields = {
+            "nombre",
+            "descripcion",
+            "latitud",
+            "longitud",
+            "idtipoinmobiliaria",
+            "precio",
+            "vendido",
+            "area_total_m2",
+            "dormitorios",
+            "banos",
+            "cuartos",
+            "titulo_propiedad",
+            "cochera",
+            "cocina",
+            "sala",
+            "patio",
+            "jardin",
+            "terraza",
+            "azotea",
+            "ancho",
+            "largo",
+            "pais",
+            "bandera",
+            "moneda",
+        }
+        update_payload = {key: request.data.get(key) for key in allowed_update_fields if key in request.data}
+
+        # Actualizar datos principales sin permitir mover el lote a otro proyecto.
+        serializer = LoteSerializer(lote, data=update_payload, partial=True)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -459,9 +497,9 @@ def updateLote(request, idlote):
             status=status.HTTP_200_OK,
         )
 
-    except Exception as e:
+    except Exception:
         return Response(
-            {"error": f"Ocurrió un error: {str(e)}"},
+            {"error": "No se pudo actualizar el lote."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -521,16 +559,17 @@ def updateLoteVendido(request, idlote):
             status=status.HTTP_200_OK,
         )
 
-    except Exception as e:
+    except Exception:
         return Response(
-            {"error": f"Ocurrió un error: {str(e)}"},
+            {"error": "No se pudo actualizar el lote."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
-def rangoPrecio(_request, rango):
+@throttle_classes([PublicListRateThrottle])
+def rangoPrecio(request, rango):
     try:
         num1, num2 = rango.split("-")
 
@@ -542,15 +581,16 @@ def rangoPrecio(_request, rango):
             precio__range=(num1, num2), idtipoinmobiliaria=2
         )
 
-        serializer_lote = LoteSerializer(lote, many=True)
-        serializer_proyecto = ProyectoSerializer(proyecto, many=True)
+        cap = _public_cap(request)
+        serializer_lote = LoteSerializer(lote[:cap], many=True)
+        serializer_proyecto = ProyectoSerializer(proyecto[:cap], many=True)
 
         return Response(
             {"lotes": serializer_lote.data, "proyectos": serializer_proyecto.data}
         )
 
-    except Exception as e:
-        return Response({"error": str(e)}, status=400)
+    except Exception:
+        return Response({"error": "Rango de precio inválido."}, status=400)
 
 
 @api_view(["DELETE"])
@@ -617,9 +657,9 @@ def deleteLote(request, idlote):
             status=status.HTTP_200_OK,
         )
 
-    except Exception as e:
+    except Exception:
         return Response(
-            {"error": f"Ocurrió un error al eliminar el lote: {str(e)}"},
+            {"error": "No se pudo eliminar el lote."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -749,13 +789,14 @@ def registerLotesMasivo(request):
 
                         # Guardar puntos
                         puntos_bulk = []
-                        for punto in puntos_valid:
+                        for point_index, punto in enumerate(puntos_valid):
                             puntos_bulk.append(
                                 Puntos(
                                     idlote=lote,
                                     latitud=punto["latitud"],
                                     longitud=punto["longitud"],
                                     estado=1,
+                                    orden=point_index + 1,
                                 )
                             )
                         if puntos_bulk:
@@ -795,7 +836,7 @@ def registerLotesMasivo(request):
                         {
                             "indice": idx,
                             "nombre": lote_data.get("nombre", f"Lote {idx}"),
-                            "error": str(e),
+                            "error": "No se pudo procesar este lote.",
                         }
                     )
 
@@ -836,5 +877,5 @@ def registerLotesMasivo(request):
             )
         return Response(response_data, status=status_code)
 
-    except Exception as e:
-        return Response({"error": str(e)}, status=400)
+    except Exception:
+        return Response({"error": "No se pudo registrar los lotes."}, status=400)

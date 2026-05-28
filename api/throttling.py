@@ -50,3 +50,15 @@ class ActivationResendRateThrottle(BaseIPThrottle):
 
 class FrontendErrorReportThrottle(BaseIPThrottle):
     scope = "frontend_error_report"
+
+
+class Upload360RateThrottle(BaseIPThrottle):
+    scope = "upload_360"
+
+
+class PlanExtractionRateThrottle(BaseIPThrottle):
+    scope = "plan_extraction"
+
+
+class PublicListRateThrottle(BaseIPThrottle):
+    scope = "public_list"

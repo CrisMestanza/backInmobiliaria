@@ -37,8 +37,8 @@ def list_iconos_disponibles(_request):
         )
         serializer = IconoProyectoSerializer(iconos, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
-    except Exception as e:
-        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception:
+        return Response({"error": "No se pudo obtener los íconos del proyecto."}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(["GET"])
@@ -63,8 +63,8 @@ def list_iconos_proyecto(_request, idproyecto):
         )
         serializer = IconoProyectoSerializer(iconos, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
-    except Exception as e:
-        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception:
+        return Response({"error": "No se pudo obtener los íconos disponibles."}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(["POST"])
@@ -89,8 +89,6 @@ def add_iconos_proyecto(request):
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    # 👇 Esto hará que veas el detalle exacto del error
-    print("Errores serializer:", serializer.errors)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
