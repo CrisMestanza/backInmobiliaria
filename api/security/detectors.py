@@ -1,6 +1,6 @@
 from urllib.parse import unquote_plus
 
-from .conf import SecurityConfig, path_matches
+from .conf import SecurityConfig, path_contains_any, path_matches
 
 
 def is_allowed_bot(user_agent: str, config: SecurityConfig) -> bool:
@@ -14,7 +14,7 @@ def is_suspicious_user_agent(user_agent: str, config: SecurityConfig) -> bool:
 
 
 def is_sensitive_path(path: str, config: SecurityConfig) -> bool:
-    return path_matches(path, config.sensitive_paths)
+    return path_matches(path, config.sensitive_paths) or path_contains_any(path, config.sensitive_substrings)
 
 
 def request_is_in_scope(path: str, config: SecurityConfig) -> bool:

@@ -7,6 +7,10 @@ from django.db import DatabaseError
 from django.utils import timezone
 
 from api.models import BlockedIP, SecurityEvent
+from api.request_utils import get_client_ip
+
+from .conf import get_security_config, ip_is_whitelisted, request_path_is_whitelisted
+from .detectors import is_sensitive_path
 
 logger = logging.getLogger("api.security")
 
@@ -26,7 +30,7 @@ def _cache_incr(key, timeout, amount=1):
         return amount
 
 
-def active_block_for_ip(ip: str):
+def active_block_for_ip(ip: str, config=None):
     key = f"security:block:{ip}"
     cached = cache.get(key)
     if cached is not None:
@@ -46,7 +50,8 @@ def active_block_for_ip(ip: str):
             return payload
     except DatabaseError:
         logger.exception("blocked_ip_lookup_failed ip=%s", ip)
-    cache.set(key, False, timeout=30)
+    negative_ttl = getattr(config, "block_negative_cache_seconds", 120)
+    cache.set(key, False, timeout=negative_ttl)
     return False
 
 
@@ -56,7 +61,8 @@ def clear_block_cache(ip: str):
 
 def log_security_event(ip, request, event_type, risk_score=0, action="score", reason="", metadata=None, sample_seconds=60):
     fingerprint = cache_key("event", ip, event_type, reason, request.path)
-    if action not in {"blocked", "banned"} and not cache.add(fingerprint, True, timeout=sample_seconds):
+    should_sample = sample_seconds and sample_seconds > 0 and action != "banned"
+    if should_sample and not cache.add(fingerprint, True, timeout=sample_seconds):
         return
     try:
         SecurityEvent.objects.create(
@@ -110,7 +116,7 @@ def ban_ip(ip, request, reason, minutes, score, permanent=False, metadata=None):
         return None, False
 
 
-def add_risk(ip, request, event_type, points, reason, config, metadata=None):
+def add_risk(ip, request, event_type, points, reason, config, metadata=None, ban_reason=None):
     score_key = f"security:score:{ip}"
     score = _cache_incr(score_key, timeout=24 * 3600, amount=points)
     log_security_event(
@@ -124,10 +130,10 @@ def add_risk(ip, request, event_type, points, reason, config, metadata=None):
         sample_seconds=config.log_sample_seconds,
     )
     if score >= config.permanent_score:
-        ban_ip(ip, request, "risk_score_permanent_threshold", config.temp_ban_minutes, score, permanent=True)
+        ban_ip(ip, request, ban_reason or "risk_score_permanent_threshold", config.temp_ban_minutes, score, permanent=True)
         return score, "banned"
     if score >= config.ban_score:
-        ban_ip(ip, request, "risk_score_threshold", config.temp_ban_minutes, score)
+        ban_ip(ip, request, ban_reason or "risk_score_threshold", config.temp_ban_minutes, score)
         return score, "banned"
     return score, "score"
 
@@ -143,10 +149,10 @@ def rate_limit(ip, request, config):
     minute = _cache_incr(f"security:rate:min:{ip}", timeout=60)
     burst = _cache_incr(f"security:rate:burst:{ip}", timeout=10)
     if minute > config.rate_limit_per_minute:
-        score, _ = add_risk(ip, request, "rate_limit_minute", 25, "too_many_requests_per_minute", config)
+        score, _ = add_risk(ip, request, "rate_limit_minute", 40, "too_many_requests_per_minute", config)
         return False, 60, score
     if burst > config.burst_limit_per_10_seconds:
-        score, _ = add_risk(ip, request, "rate_limit_burst", 20, "request_burst", config)
+        score, _ = add_risk(ip, request, "rate_limit_burst", 40, "request_burst", config)
         return False, 10, score
     return True, None, None
 
@@ -168,7 +174,18 @@ def leave_request(ip):
 
 def record_sensitive_hit(ip, request, config):
     hits = _cache_incr(f"security:sensitive:{ip}", timeout=10 * 60)
-    score, action = add_risk(ip, request, "sensitive_path", 35, "sensitive_path_probe", config, {"hits": hits})
+    score, action = add_risk(ip, request, "sensitive_path", 30, "sensitive_path_probe", config, {"hits": hits})
+    if hits >= config.sensitive_hits_to_ban and action != "banned":
+        score, action = add_risk(
+            ip,
+            request,
+            "repeated_scanner_requests",
+            20,
+            "repeated_sensitive_path_probe",
+            config,
+            {"hits": hits},
+            ban_reason="repeated_sensitive_path_probe",
+        )
     if hits >= config.sensitive_hits_to_ban and action != "banned":
         ban_ip(ip, request, "repeated_sensitive_path_probe", config.temp_ban_minutes, score)
         action = "banned"
@@ -178,8 +195,158 @@ def record_sensitive_hit(ip, request, config):
 def record_missing_path(ip, request, config):
     hits = _cache_incr(f"security:404:{ip}", timeout=10 * 60)
     if hits >= config.missing_hits_to_score:
-        return add_risk(ip, request, "not_found_flood", 15, "many_404_responses", config, {"hits": hits})
+        return add_risk(ip, request, "not_found_flood", 20, "many_404_responses", config, {"hits": hits})
     return hits, "counted"
+
+
+def _attach_security_observation(
+    request,
+    *,
+    event_type,
+    reason,
+    risk_delta=0,
+    score_total=None,
+    action="counted",
+    hits=None,
+    status_code=None,
+    blocked=False,
+):
+    request._security_observation = {
+        "event_type": event_type,
+        "reason": reason,
+        "risk_delta": risk_delta,
+        "score_total": score_total,
+        "action": action,
+        "hits": hits,
+        "status_code": status_code,
+        "blocked": blocked,
+    }
+
+
+def observe_security_response(request, response):
+    """
+    Segunda capa: alimenta el score del WAF desde respuestas 404/403/500.
+
+    Corre despues de las views, por eso no intenta cambiar la respuesta actual.
+    Si supera el threshold, crea BlockedIP y el siguiente request se corta en el
+    middleware antes de DRF/views.
+    """
+    config = get_security_config()
+    if not config.enabled:
+        return None
+    request._security_response_observed = True
+
+    path = request.path or ""
+    status_code = int(getattr(response, "status_code", 0) or 0)
+    if status_code not in {403, 404, 500} and status_code < 500:
+        return None
+    if request_path_is_whitelisted(request.method, path, config):
+        return None
+
+    ip = get_client_ip(request)
+    if ip_is_whitelisted(ip, config.whitelist_ips):
+        return None
+
+    if is_sensitive_path(path, config):
+        hits = _cache_incr(f"security:response_sensitive:{ip}", timeout=10 * 60)
+        score, action = add_risk(
+            ip,
+            request,
+            "sensitive_response_path",
+            30,
+            "sensitive_path_after_response",
+            config,
+            {"hits": hits, "status_code": status_code, "source": "response_observer"},
+            ban_reason="repeated_sensitive_path_probe",
+        )
+        _attach_security_observation(
+            request,
+            event_type="sensitive_response_path",
+            reason="sensitive_path_after_response",
+            risk_delta=30,
+            score_total=score,
+            action=action,
+            hits=hits,
+            status_code=status_code,
+            blocked=action == "banned",
+        )
+        if hits >= config.sensitive_hits_to_ban and action != "banned":
+            score, action = add_risk(
+                ip,
+                request,
+                "repeated_scanner_response",
+                20,
+                "repeated_sensitive_path_probe",
+                config,
+                {"hits": hits, "status_code": status_code, "source": "response_observer"},
+                ban_reason="repeated_sensitive_path_probe",
+            )
+            _attach_security_observation(
+                request,
+                event_type="repeated_scanner_response",
+                reason="repeated_sensitive_path_probe",
+                risk_delta=20,
+                score_total=score,
+                action=action,
+                hits=hits,
+                status_code=status_code,
+                blocked=action == "banned",
+            )
+        if hits >= config.sensitive_hits_to_ban and action != "banned":
+            ban_ip(ip, request, "repeated_sensitive_path_probe", config.temp_ban_minutes, score)
+            action = "banned"
+            _attach_security_observation(
+                request,
+                event_type="ip_banned",
+                reason="repeated_sensitive_path_probe",
+                risk_delta=0,
+                score_total=score,
+                action=action,
+                hits=hits,
+                status_code=status_code,
+                blocked=True,
+            )
+        return action
+
+    if status_code == 404:
+        hits_or_score, action = record_missing_path(ip, request, config)
+        _attach_security_observation(
+            request,
+            event_type="not_found_flood" if action in {"score", "banned"} else "not_found",
+            reason="many_404_responses" if action in {"score", "banned"} else "not_found_counted",
+            risk_delta=20 if action in {"score", "banned"} else 0,
+            score_total=hits_or_score if action in {"score", "banned"} else cache.get(f"security:score:{ip}", 0),
+            action=action,
+            hits=hits_or_score if action == "counted" else None,
+            status_code=status_code,
+            blocked=action == "banned",
+        )
+        return action
+
+    if status_code >= 500:
+        score, action = add_risk_once(
+            ip,
+            request,
+            "server_error_response",
+            10,
+            "server_error_response",
+            config,
+            5 * 60,
+            {"status_code": status_code, "source": "response_observer"},
+        )
+        _attach_security_observation(
+            request,
+            event_type="server_error_response",
+            reason="server_error_response",
+            risk_delta=10 if action != "counted" else 0,
+            score_total=score,
+            action=action,
+            status_code=status_code,
+            blocked=action == "banned",
+        )
+        return action
+
+    return None
 
 
 def cleanup_expired_blocks():
@@ -187,3 +354,42 @@ def cleanup_expired_blocks():
         is_active=False
     )
     return updated
+
+
+def cleanup_security_records(config=None):
+    config = config or get_security_config()
+    expired_blocks = cleanup_expired_blocks()
+    cutoff = timezone.now() - timedelta(days=config.event_retention_days)
+    old_events_deleted, _ = SecurityEvent.objects.filter(created_at__lt=cutoff).delete()
+
+    capped_events_deleted = 0
+    max_events = max(0, int(config.max_security_events))
+    if max_events:
+        overflow = SecurityEvent.objects.count() - max_events
+        if overflow > 0:
+            delete_count = min(overflow, max(1, int(config.cleanup_batch_size)))
+            ids = list(
+                SecurityEvent.objects.order_by("created_at")
+                .values_list("idsecurityevent", flat=True)[:delete_count]
+            )
+            if ids:
+                capped_events_deleted, _ = SecurityEvent.objects.filter(idsecurityevent__in=ids).delete()
+
+    return {
+        "expired_blocks": expired_blocks,
+        "old_events_deleted": old_events_deleted,
+        "capped_events_deleted": capped_events_deleted,
+    }
+
+
+def maybe_cleanup_security_records(config=None):
+    config = config or get_security_config()
+    if config.cleanup_interval_seconds <= 0:
+        return None
+    if not cache.add("security:cleanup:lock", True, timeout=config.cleanup_interval_seconds):
+        return None
+    try:
+        return cleanup_security_records(config)
+    except Exception:
+        logger.exception("security_cleanup_failed")
+        return None

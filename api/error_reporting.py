@@ -10,6 +10,7 @@ from django.conf import settings
 from django.http.request import RawPostDataException
 
 from api.request_utils import get_client_ip
+from api.security.services import observe_security_response
 
 logger = logging.getLogger("api.error_reporting")
 
@@ -188,6 +189,29 @@ def _request_context(request):
     }
 
 
+def _security_context(request):
+    observation = getattr(request, "_security_observation", None)
+    if not observation:
+        return None
+    action_label = {
+        "counted": "contabilizado",
+        "score": "score aumentado",
+        "banned": "IP bloqueada",
+    }.get(observation.get("action"), observation.get("action"))
+    return sanitize_value(
+        {
+            "evento": observation.get("event_type"),
+            "motivo": observation.get("reason"),
+            "accion": action_label,
+            "riesgo_sumado": observation.get("risk_delta"),
+            "score_total_ip": observation.get("score_total"),
+            "hits_ventana": observation.get("hits"),
+            "status": observation.get("status_code"),
+            "bloqueada": observation.get("blocked"),
+        }
+    )
+
+
 def _response_body(response):
     data = getattr(response, "data", None)
     if data is not None:
@@ -318,6 +342,11 @@ def notify_backend_exception(request, exc):
 
 
 def notify_backend_response(request, response):
+    try:
+        observe_security_response(request, response)
+    except Exception:
+        logger.exception("security_response_observer_failed path=%s", getattr(request, "path", ""))
+
     if not should_report_response(request, response) or already_reported(request):
         return
 
@@ -338,6 +367,7 @@ def notify_backend_response(request, response):
             ("Usuario", request_context.get("user")),
             ("Payload", request_context.get("body")),
             ("Query", request_context.get("query_params")),
+            ("Seguridad WAF", _security_context(request)),
             ("Respuesta", _response_body(response)),
         ],
     )

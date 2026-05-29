@@ -144,7 +144,10 @@ def guardar_tour_360_completo(request):
             if isinstance(overlays_2d_payload, dict):
                 overlays_2d_resolved = dict(overlays_2d_payload)
                 layouts = overlays_2d_payload.get('layouts') or []
+                anchored_overlays = overlays_2d_payload.get('anchoredOverlays') or overlays_2d_payload.get('panoramaOverlays') or []
                 resolved_layouts = []
+                resolved_anchored_overlays = []
+                overlay_image_ids = set()
 
                 for layout in layouts:
                     resolved_image_id = resolver_id_imagen(
@@ -155,12 +158,28 @@ def guardar_tour_360_completo(request):
                     layout_copy = dict(layout)
                     layout_copy['imageId'] = resolved_image_id
                     resolved_layouts.append(layout_copy)
+                    overlay_image_ids.add(resolved_image_id)
+
+                if isinstance(anchored_overlays, list):
+                    for overlay in anchored_overlays:
+                        if not isinstance(overlay, dict):
+                            continue
+                        resolved_image_id = resolver_id_imagen(
+                            overlay.get('imageId') or overlay.get('imagenId') or overlay.get('id_imagen')
+                        )
+                        if resolved_image_id is None:
+                            continue
+                        overlay_copy = dict(overlay)
+                        overlay_copy['imageId'] = resolved_image_id
+                        resolved_anchored_overlays.append(overlay_copy)
+                        overlay_image_ids.add(resolved_image_id)
 
                 overlays_2d_resolved['layouts'] = resolved_layouts
-                overlays_2d_json = json.dumps(overlays_2d_resolved)
+                overlays_2d_resolved['anchoredOverlays'] = resolved_anchored_overlays
+                overlays_2d_json = json.dumps(overlays_2d_resolved, separators=(',', ':'))
 
-                for layout in resolved_layouts:
-                    Imagen360.objects.filter(id_imagen=layout['imageId']).update(
+                for image_id in overlay_image_ids:
+                    Imagen360.objects.filter(id_imagen=image_id, idproyecto=proyecto_instancia).update(
                         overlays_2d=overlays_2d_json
                     )
 
@@ -268,7 +287,12 @@ def guardar_imagenes_360_multiple(request):
 @throttle_classes([PublicMapRateThrottle])
 def get_imagenes_360_multiple(request, idproyecto):
     # 1. Obtenemos todas las imágenes filtradas por el ID del proyecto
-    imagenes = Imagen360.objects.filter(idproyecto=idproyecto)
+    imagenes = (
+        Imagen360.objects
+        .filter(idproyecto=idproyecto)
+        .select_related("idproyecto", "idlote")
+        .order_by("id_imagen")
+    )
     
     # 2. Serializamos la lista (many=True es obligatorio porque son varios objetos)
     serializer = Imagen360Serializer(imagenes, many=True)
@@ -367,7 +391,12 @@ def conectar_puntos_360(request):
 @permission_classes([AllowAny])
 @throttle_classes([PublicMapRateThrottle])
 def get_hotspots_por_imagen(request, id_imagen):
-    hotspots = Hotspot360.objects.filter(imagen_origen_id=id_imagen)
+    hotspots = (
+        Hotspot360.objects
+        .filter(imagen_origen_id=id_imagen)
+        .select_related("imagen_destino")
+        .order_by("id_hotspot")
+    )
 
     data = [
         {

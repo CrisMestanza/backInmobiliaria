@@ -2,9 +2,31 @@ import fnmatch
 import ipaddress
 import re
 from dataclasses import dataclass
+from functools import lru_cache
+from urllib.parse import unquote
 
 from django.conf import settings
+from django.core.signals import setting_changed
+from django.dispatch import receiver
 
+
+DEFAULT_WHITELIST_METHODS = ["OPTIONS"]
+
+DEFAULT_WHITELIST_EXACT_PATHS = [
+    "/",
+    "/api/health/",
+    "/api/healthcheck/",
+    "/api/healthcheck",
+    "/health/",
+    "/healthcheck/",
+    "/favicon.ico",
+    "/robots.txt",
+]
+
+DEFAULT_WHITELIST_PATH_PREFIXES = [
+    "/static/",
+    "/media/",
+]
 
 DEFAULT_SENSITIVE_PATHS = [
     "/api/schema/swagger-ui",
@@ -51,7 +73,6 @@ DEFAULT_SENSITIVE_PATHS = [
     "/api/ping",
     "/api/version",
     "/api/status",
-    "/api/healthcheck",
     "/api/*.php",
     "/api/*.php.*",
     "/api/objects/*.php*",
@@ -62,6 +83,35 @@ DEFAULT_SENSITIVE_PATHS = [
     "/xmlrpc.php",
     "/vendor/*",
     "/phpmyadmin/*",
+]
+
+DEFAULT_SENSITIVE_SUBSTRINGS = [
+    ".env",
+    ".git",
+    "actuator",
+    "heapdump",
+    "swagger",
+    "swagger-ui",
+    "graphql",
+    "openapi",
+    "phpinfo",
+    "docker-compose",
+    "credentials",
+    "config",
+    "settings",
+    "backup",
+    "dump.sql",
+    "db.sqlite",
+    "__pycache__",
+    ".bak",
+    ".zip",
+    ".gz",
+    "wp-admin",
+    "wp-login",
+    "server-status",
+    "aws.json",
+    "sonicos/is-sslvpn-enabled",
+    "sslvpn",
 ]
 
 DEFAULT_SQLI_PATTERNS = [
@@ -107,6 +157,10 @@ class SecurityConfig:
     sqli_patterns: tuple[re.Pattern, ...]
     path_traversal_patterns: tuple[re.Pattern, ...]
     sensitive_paths: tuple[str, ...]
+    sensitive_substrings: tuple[str, ...]
+    whitelist_methods: tuple[str, ...]
+    whitelist_exact_paths: tuple[str, ...]
+    whitelist_path_prefixes: tuple[str, ...]
     api_prefixes: tuple[str, ...]
     rate_limit_per_minute: int
     burst_limit_per_10_seconds: int
@@ -118,12 +172,19 @@ class SecurityConfig:
     missing_hits_to_score: int
     body_inspection_bytes: int
     log_sample_seconds: int
+    block_negative_cache_seconds: int
+    cleanup_interval_seconds: int
+    event_retention_days: int
+    max_security_events: int
+    cleanup_batch_size: int
+    debug_logs: bool
 
 
 def _compile_many(patterns):
     return tuple(re.compile(pattern) for pattern in patterns)
 
 
+@lru_cache(maxsize=1)
 def get_security_config() -> SecurityConfig:
     raw = getattr(settings, "SECURITY_WAF", {})
     return SecurityConfig(
@@ -134,18 +195,34 @@ def get_security_config() -> SecurityConfig:
         sqli_patterns=_compile_many(raw.get("SQLI_PATTERNS", DEFAULT_SQLI_PATTERNS)),
         path_traversal_patterns=_compile_many(raw.get("PATH_TRAVERSAL_PATTERNS", DEFAULT_PATH_TRAVERSAL_PATTERNS)),
         sensitive_paths=tuple(raw.get("SENSITIVE_PATHS", DEFAULT_SENSITIVE_PATHS)),
+        sensitive_substrings=tuple(raw.get("SENSITIVE_SUBSTRINGS", DEFAULT_SENSITIVE_SUBSTRINGS)),
+        whitelist_methods=tuple(raw.get("WHITELIST_METHODS", DEFAULT_WHITELIST_METHODS)),
+        whitelist_exact_paths=tuple(raw.get("WHITELIST_EXACT_PATHS", DEFAULT_WHITELIST_EXACT_PATHS)),
+        whitelist_path_prefixes=tuple(raw.get("WHITELIST_PATH_PREFIXES", DEFAULT_WHITELIST_PATH_PREFIXES)),
         api_prefixes=tuple(raw.get("API_PREFIXES", ("/api/",))),
         rate_limit_per_minute=int(raw.get("RATE_LIMIT_PER_MINUTE", 180)),
         burst_limit_per_10_seconds=int(raw.get("BURST_LIMIT_PER_10_SECONDS", 60)),
         concurrent_limit=int(raw.get("CONCURRENT_LIMIT", 12)),
         temp_ban_minutes=int(raw.get("TEMP_BAN_MINUTES", 60)),
-        permanent_score=int(raw.get("PERMANENT_SCORE", 140)),
-        ban_score=int(raw.get("BAN_SCORE", 70)),
+        permanent_score=int(raw.get("PERMANENT_SCORE", 200)),
+        ban_score=int(raw.get("BAN_SCORE", 100)),
         sensitive_hits_to_ban=int(raw.get("SENSITIVE_HITS_TO_BAN", 3)),
         missing_hits_to_score=int(raw.get("MISSING_HITS_TO_SCORE", 8)),
         body_inspection_bytes=int(raw.get("BODY_INSPECTION_BYTES", 16384)),
         log_sample_seconds=int(raw.get("LOG_SAMPLE_SECONDS", 60)),
+        block_negative_cache_seconds=int(raw.get("BLOCK_NEGATIVE_CACHE_SECONDS", 120)),
+        cleanup_interval_seconds=int(raw.get("CLEANUP_INTERVAL_SECONDS", 24 * 3600)),
+        event_retention_days=int(raw.get("EVENT_RETENTION_DAYS", 30)),
+        max_security_events=int(raw.get("MAX_SECURITY_EVENTS", 50000)),
+        cleanup_batch_size=int(raw.get("CLEANUP_BATCH_SIZE", 1000)),
+        debug_logs=bool(raw.get("DEBUG_LOGS", False)),
     )
+
+
+@receiver(setting_changed)
+def clear_security_config_cache(setting, **kwargs):
+    if setting == "SECURITY_WAF":
+        get_security_config.cache_clear()
 
 
 def ip_is_whitelisted(ip: str, networks: tuple[str, ...]) -> bool:
@@ -166,7 +243,7 @@ def ip_is_whitelisted(ip: str, networks: tuple[str, ...]) -> bool:
 
 
 def path_matches(path: str, patterns: tuple[str, ...]) -> bool:
-    normalized = (path or "").lower()
+    normalized = unquote(path or "").lower()
     for pattern in patterns:
         candidate = pattern.lower()
         if "*" in candidate:
@@ -175,3 +252,17 @@ def path_matches(path: str, patterns: tuple[str, ...]) -> bool:
         elif normalized == candidate or normalized.startswith(candidate.rstrip("/") + "/"):
             return True
     return False
+
+
+def path_contains_any(path: str, patterns: tuple[str, ...]) -> bool:
+    normalized = unquote(path or "").lower()
+    return any(pattern.lower() in normalized for pattern in patterns)
+
+
+def request_path_is_whitelisted(method: str, path: str, config: SecurityConfig) -> bool:
+    normalized = unquote(path or "").lower()
+    if (method or "").upper() in {item.upper() for item in config.whitelist_methods}:
+        return True
+    if normalized in {item.lower() for item in config.whitelist_exact_paths}:
+        return True
+    return any(normalized.startswith(prefix.lower()) for prefix in config.whitelist_path_prefixes)
