@@ -5,6 +5,8 @@ from rest_framework.response import Response
 from django.conf import settings
 from django.db import transaction
 import json
+import logging
+import traceback
 from api.models import *
 from api.serializers import *
 from api.authentication import CustomJWTAuthentication
@@ -13,8 +15,12 @@ from api.throttling import PublicMapRateThrottle, Upload360RateThrottle
 from api.upload_limits import enforce_file_batch_limits
 from api.views.permissions import is_project_owned_by_user
 
+logger = logging.getLogger(__name__)
 
-def _generic_error(status_code=500):
+
+def _generic_error(status_code=500, exc=None):
+    if exc is not None:
+        logger.error("Error en imagen360Casa: %s\n%s", exc, traceback.format_exc())
     return Response({"error": "No se pudo procesar la solicitud."}, status=status_code)
 
 
@@ -223,7 +229,7 @@ def guardar_tour_360_completo(request):
         }, status=201)
 
     except Exception as e:
-        return _generic_error()
+        return _generic_error(exc=e)
 
 
 @api_view(['POST'])
@@ -279,8 +285,8 @@ def guardar_imagenes_360_multiple(request):
         }, status=201)
 
     except Exception as e:
-        return _generic_error()
-    
+        return _generic_error(exc=e)
+
 
 @api_view(['GET']) # Permitimos GET para que sea fácil de probar
 @permission_classes([AllowAny])
@@ -352,8 +358,8 @@ def agregar_punto_recorrido(request):
         }, status=201)
 
     except Exception as e:
-        return _generic_error()
-    
+        return _generic_error(exc=e)
+
 @api_view(['POST'])
 @authentication_classes([CustomJWTAuthentication])
 @permission_classes([IsAuthenticated])
@@ -383,8 +389,8 @@ def conectar_puntos_360(request):
         return Response({"message": "ok"}, status=201)
 
     except Exception as e:
-        return _generic_error()
-    
+        return _generic_error(exc=e)
+
     
     
 @api_view(['GET'])
