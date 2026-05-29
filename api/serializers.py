@@ -9,6 +9,18 @@ from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import *
+from .validation_utils import (
+    contains_unsafe_markup,
+    is_disposable_email,
+    is_reasonable_business_name,
+    is_reasonable_description,
+    is_realistic_person_name,
+    is_unapproved_internal_email,
+    normalize_phone,
+    normalize_social_url,
+    normalize_text,
+    normalize_website_url,
+)
 
 
 def _project_360_preview_url(value):
@@ -78,6 +90,60 @@ class InmobiliariaSerializer(serializers.ModelSerializer):
             "correo",
             "idusuario",
         )
+
+    def validate_nombreinmobiliaria(self, value):
+        name = normalize_text(value)
+        if not is_reasonable_business_name(name):
+            raise serializers.ValidationError("Ingresa un nombre comercial real y valido.")
+        return name
+
+    def validate_descripcion(self, value):
+        description = normalize_text(value)
+        if not is_reasonable_description(description):
+            raise serializers.ValidationError("Describe brevemente tu inmobiliaria sin scripts, enlaces o texto de prueba.")
+        return description
+
+    def validate_telefono(self, value):
+        raw = normalize_text(value)
+        digits = normalize_phone(raw)
+        if len(digits) < 7 or len(digits) > 15:
+            raise serializers.ValidationError("Ingresa un telefono valido.")
+        return raw
+
+    def validate_whatsapp(self, value):
+        raw = normalize_text(value)
+        if not raw:
+            return raw
+        digits = normalize_phone(raw)
+        if len(digits) < 7 or len(digits) > 15:
+            raise serializers.ValidationError("Ingresa un WhatsApp valido.")
+        return raw
+
+    def validate_correo(self, value):
+        correo = normalize_text(value).lower()
+        if is_disposable_email(correo):
+            raise serializers.ValidationError("Ingresa un correo corporativo o personal real.")
+        if is_unapproved_internal_email(correo):
+            raise serializers.ValidationError("Este dominio esta reservado para cuentas oficiales de GeoHabita.")
+        return correo
+
+    def validate_facebook(self, value):
+        try:
+            return normalize_social_url(value, platform="facebook")
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc))
+
+    def validate_tiktok(self, value):
+        try:
+            return normalize_social_url(value, platform="tiktok")
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc))
+
+    def validate_pagina(self, value):
+        try:
+            return normalize_website_url(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc))
 class PuntosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Puntos
@@ -276,6 +342,10 @@ class UsuarioSerializer(serializers.ModelSerializer):
         correo = (value or "").strip().lower()
         if not correo:
             raise serializers.ValidationError("El correo es obligatorio.")
+        if is_disposable_email(correo):
+            raise serializers.ValidationError("Ingresa un correo personal o corporativo real.")
+        if is_unapproved_internal_email(correo):
+            raise serializers.ValidationError("Este dominio esta reservado para cuentas oficiales de GeoHabita.")
         qs = Usuario.objects.filter(correo__iexact=correo)
         if self.instance is not None:
             qs = qs.exclude(idusuario=self.instance.idusuario)
@@ -284,12 +354,9 @@ class UsuarioSerializer(serializers.ModelSerializer):
         return correo
 
     def validate_nombre(self, value):
-        nombre = (value or "").strip()
-        if len(nombre) < 5:
-            raise serializers.ValidationError("Ingresa tu nombre completo real.")
-        parts = re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]{2,}", nombre)
-        if len(parts) < 2:
-            raise serializers.ValidationError("Debes ingresar al menos nombre y apellido.")
+        nombre = normalize_text(value)
+        if not is_realistic_person_name(nombre):
+            raise serializers.ValidationError("Ingresa tu nombre y apellido reales.")
         return nombre
 
     def create(self, validated_data):
@@ -521,6 +588,14 @@ class InmobiliariaRegistroSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("El campo usuario debe ser un objeto.")
         return value
 
+    def validate_correo(self, value):
+        correo = normalize_text(value).lower()
+        if is_disposable_email(correo):
+            raise serializers.ValidationError("Ingresa un correo corporativo o personal real.")
+        if is_unapproved_internal_email(correo):
+            raise serializers.ValidationError("Este dominio esta reservado para cuentas oficiales de GeoHabita.")
+        return correo
+
     def create(self, validated_data):
         usuario_data = validated_data.pop("usuario", {}) or {}
         safe_usuario_data = {
@@ -536,11 +611,20 @@ class InmobiliariaRegistroSerializer(serializers.ModelSerializer):
         if not safe_usuario_data["correo"] or not safe_usuario_data["password"]:
             raise serializers.ValidationError({"usuario": "correo y password son obligatorios"})
 
-        validate_password(safe_usuario_data["password"])
-        safe_usuario_data["password"] = make_password(safe_usuario_data["password"])
+        usuario_serializer = UsuarioSerializer(data=safe_usuario_data)
+        usuario_serializer.is_valid(raise_exception=True)
+        safe_usuario_data = usuario_serializer.validated_data
+        raw_password = safe_usuario_data.pop("password")
 
         with transaction.atomic():
-            usuario = Usuario.objects.create(**safe_usuario_data)
+            usuario = Usuario.objects.create(
+                **safe_usuario_data,
+                password=make_password(raw_password),
+                estado=0,
+                is_staff=False,
+                is_superuser=False,
+                is_active=False,
+            )
             inmobiliaria = Inmobiliaria.objects.create(idusuario=usuario, **validated_data)
         return inmobiliaria
 

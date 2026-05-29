@@ -3,10 +3,12 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django.conf import settings
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 import json
 import logging
 import traceback
+from rest_framework.exceptions import ValidationError
 from api.models import *
 from api.serializers import *
 from api.authentication import CustomJWTAuthentication
@@ -18,10 +20,42 @@ from api.views.permissions import is_project_owned_by_user
 logger = logging.getLogger(__name__)
 
 
+def _plain_error_text(detail):
+    if isinstance(detail, dict):
+        messages = []
+        for value in detail.values():
+            messages.append(_plain_error_text(value))
+        return " ".join(message for message in messages if message)
+    if isinstance(detail, (list, tuple)):
+        return " ".join(_plain_error_text(item) for item in detail if item)
+    return str(detail).strip()
+
+
+def _client_error(message, status_code=400, code="tour_360_validation_error", extra=None):
+    payload = {"error": message, "code": code}
+    if extra:
+        payload.update(extra)
+    return Response(payload, status=status_code)
+
+
+def _validation_error_response(exc, *, file_name=None):
+    message = _plain_error_text(getattr(exc, "detail", exc)) or "Datos invalidos para el tour 360."
+    if file_name:
+        message = f"Imagen '{file_name}': {message}"
+    status_code = 413 if "tamaño máximo" in message.lower() or "excede" in message.lower() else 400
+    return _client_error(message, status_code=status_code, code="tour_360_validation_error")
+
+
 def _generic_error(status_code=500, exc=None):
     if exc is not None:
         logger.error("Error en imagen360Casa: %s\n%s", exc, traceback.format_exc())
-    return Response({"error": "No se pudo procesar la solicitud."}, status=status_code)
+    return Response(
+        {
+            "error": "No se pudo procesar la solicitud del tour 360. Intenta nuevamente.",
+            "code": "tour_360_server_error",
+        },
+        status=status_code,
+    )
 
 
 def _ensure_project_owner(request, project_id):
@@ -42,7 +76,12 @@ def _validate_360_files(files):
         default_total_mb=80,
     )
     for uploaded in files:
-        validate_uploaded_image(uploaded)
+        try:
+            validate_uploaded_image(uploaded)
+        except ValidationError as exc:
+            raise ValidationError(
+                f"Imagen '{getattr(uploaded, 'name', 'archivo')}': {_plain_error_text(exc.detail)}"
+            ) from exc
         uploaded.name = build_unique_image_name(uploaded.name)
     return files
 
@@ -76,7 +115,7 @@ def guardar_tour_360_completo(request):
     overlays_2d_raw = request.data.get('overlays_2d')
 
     if not id_proyecto:
-        return Response({"error": "idproyecto es requerido"}, status=400)
+        return _client_error("Selecciona un proyecto antes de guardar el tour 360.")
     permission_error = _ensure_project_owner(request, id_proyecto)
     if permission_error:
         return permission_error
@@ -90,27 +129,27 @@ def guardar_tour_360_completo(request):
         return Response({"error": "El lote no pertenece al proyecto."}, status=400)
 
     if len(nombres) != len(archivos):
-        return Response({"error": "La cantidad de nombres e imagenes no coinciden"}, status=400)
+        return _client_error("La cantidad de nombres e imagenes no coinciden.")
 
     if len(draft_ids) != len(archivos):
-        return Response({"error": "La cantidad de draft_ids e imagenes no coinciden"}, status=400)
+        return _client_error("La cantidad de draft_ids e imagenes no coinciden.")
 
     try:
         conexiones = json.loads(conexiones_raw) if conexiones_raw else []
     except json.JSONDecodeError:
-        return Response({"error": "conexiones debe ser un JSON valido"}, status=400)
+        return _client_error("Las conexiones del tour 360 tienen un formato invalido.")
 
     if not isinstance(conexiones, list):
-        return Response({"error": "conexiones debe ser una lista"}, status=400)
+        return _client_error("Las conexiones del tour 360 deben enviarse como una lista.")
     if len(conexiones) > int(getattr(settings, "MAX_360_CONNECTIONS_PER_REQUEST", 200)):
-        return Response({"error": "Demasiadas conexiones 360 en una solicitud."}, status=400)
+        return _client_error("Demasiadas conexiones 360 en una solicitud.")
 
     overlays_2d_payload = None
     if overlays_2d_raw:
         try:
             overlays_2d_payload = json.loads(overlays_2d_raw)
         except json.JSONDecodeError:
-            return Response({"error": "overlays_2d debe ser un JSON valido"}, status=400)
+            return _client_error("El overlay 2D del tour 360 tiene un formato invalido.")
 
     try:
         archivos = _validate_360_files(archivos)
@@ -196,10 +235,10 @@ def guardar_tour_360_completo(request):
                 pitch = conexion.get('pitch')
 
                 if origen_id is None or destino_id is None:
-                    raise ValueError("Hay conexiones con ids de imagen invalidos")
+                    return _client_error("Hay conexiones 360 con imagenes invalidas o no guardadas.")
 
                 if yaw is None or pitch is None:
-                    raise ValueError("Hay conexiones sin yaw o pitch")
+                    return _client_error("Hay conexiones 360 incompletas: falta yaw o pitch.")
 
                 hotspot = Hotspot360.objects.create(
                     imagen_origen_id=origen_id,
@@ -228,6 +267,10 @@ def guardar_tour_360_completo(request):
             "overlays_2d": overlays_2d_resolved,
         }, status=201)
 
+    except ValidationError as e:
+        return _validation_error_response(e)
+    except ValueError as e:
+        return _client_error(str(e) or "Datos invalidos para el tour 360.")
     except Exception as e:
         return _generic_error(exc=e)
 
@@ -284,6 +327,8 @@ def guardar_imagenes_360_multiple(request):
             "imagenes": resultados
         }, status=201)
 
+    except ValidationError as e:
+        return _validation_error_response(e)
     except Exception as e:
         return _generic_error(exc=e)
 
@@ -325,6 +370,14 @@ def agregar_punto_recorrido(request):
         permission_error = _ensure_project_owner(request, id_proyecto)
         if permission_error:
             return permission_error
+        if not id_origen:
+            return _client_error("Selecciona una imagen de origen para crear el punto 360.")
+        if not nombre_destino:
+            return _client_error("Indica un nombre para la nueva vista 360.")
+        if yaw is None or pitch is None:
+            return _client_error("Selecciona un punto valido dentro de la imagen 360.")
+        if not archivo:
+            return _client_error("Selecciona una imagen para el nuevo punto 360.")
 
         proyecto = Proyecto.objects.get(idproyecto=id_proyecto)
         lote = Lote.objects.filter(idlote=id_lote).first() if id_lote else None
@@ -357,6 +410,10 @@ def agregar_punto_recorrido(request):
             "nombre": nueva_img.nombre
         }, status=201)
 
+    except ValidationError as e:
+        return _validation_error_response(e)
+    except ObjectDoesNotExist:
+        return _client_error("El proyecto o imagen 360 solicitado no existe.", status_code=404, code="tour_360_not_found")
     except Exception as e:
         return _generic_error(exc=e)
 
@@ -370,6 +427,10 @@ def conectar_puntos_360(request):
         id_destino = request.data.get('id_destino')
         yaw = request.data.get('yaw')
         pitch = request.data.get('pitch')
+        if not id_origen or not id_destino:
+            return _client_error("Selecciona una imagen de origen y destino para conectar el tour 360.")
+        if yaw is None or pitch is None:
+            return _client_error("Selecciona un punto valido dentro de la imagen 360.")
         origin = Imagen360.objects.select_related("idproyecto").filter(id_imagen=id_origen).first()
         destination = Imagen360.objects.select_related("idproyecto").filter(id_imagen=id_destino).first()
         if not origin or not destination or origin.idproyecto_id != destination.idproyecto_id:
@@ -397,28 +458,31 @@ def conectar_puntos_360(request):
 @permission_classes([AllowAny])
 @throttle_classes([PublicMapRateThrottle])
 def get_hotspots_por_imagen(request, id_imagen):
-    hotspots = (
-        Hotspot360.objects
-        .filter(imagen_origen_id=id_imagen)
-        .select_related("imagen_destino")
-        .order_by("id_hotspot")
-    )
+    try:
+        hotspots = (
+            Hotspot360.objects
+            .filter(imagen_origen_id=id_imagen)
+            .select_related("imagen_destino")
+            .order_by("id_hotspot")
+        )
 
-    data = [
-        {
-            "id": h.id_hotspot,
-            "yaw": h.yaw,
-            "pitch": h.pitch,
-            "destino": {
-                "id_imagen": h.imagen_destino.id_imagen,
-                "imagen": h.imagen_destino.imagen.url,
-                "nombre": h.imagen_destino.nombre
+        data = [
+            {
+                "id": h.id_hotspot,
+                "yaw": h.yaw,
+                "pitch": h.pitch,
+                "destino": {
+                    "id_imagen": h.imagen_destino.id_imagen,
+                    "imagen": h.imagen_destino.imagen.url,
+                    "nombre": h.imagen_destino.nombre
+                }
             }
-        }
-        for h in hotspots
-    ]
+            for h in hotspots
+        ]
 
-    return Response(data)
+        return Response(data)
+    except Exception as e:
+        return _generic_error(exc=e)
 
 @api_view(['DELETE'])
 @authentication_classes([CustomJWTAuthentication])
