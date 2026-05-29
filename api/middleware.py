@@ -20,7 +20,10 @@ class RequestAuditLogMiddleware:
             response = self.get_response(request)
             status_code = getattr(response, "status_code", 0)
             if response is not None:
-                notify_backend_response(request, response)
+                replacement_response = notify_backend_response(request, response)
+                if replacement_response is not None:
+                    response = replacement_response
+                    status_code = getattr(response, "status_code", status_code)
             return response
         except Exception as exc:
             notify_backend_exception(request, exc)

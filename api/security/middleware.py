@@ -57,11 +57,15 @@ class InternalWAFMiddleware:
                 print(f"[WAF] {request.method} {path}")
             maybe_cleanup_security_records(config)
 
-            if ip_is_whitelisted(ip, config.whitelist_ips) or request_path_is_whitelisted(request.method, path, config):
+            path_is_whitelisted = request_path_is_whitelisted(request.method, path, config)
+            ip_is_allowed = ip_is_whitelisted(ip, config.whitelist_ips)
+
+            if path_is_whitelisted:
                 return self.get_response(request)
 
             block = active_block_for_ip(ip, config)
             if block:
+                block_reason = block.get("reason", "blocked_ip") if isinstance(block, dict) else "blocked_ip"
                 if config.debug_logs:
                     print(f"[WAF BLOCKED] {ip}")
                 log_security_event(
@@ -70,10 +74,10 @@ class InternalWAFMiddleware:
                     "blocked_ip_request",
                     risk_score=0,
                     action="blocked",
-                    reason=block.get("reason", "blocked_ip"),
+                    reason=block_reason,
                     sample_seconds=config.log_sample_seconds,
                 )
-                return self._blocked_response(block.get("reason", "blocked_ip"))
+                return self._blocked_response(block_reason, config)
 
             if is_sensitive_path(path, config):
                 if config.debug_logs:
@@ -82,8 +86,11 @@ class InternalWAFMiddleware:
                 if action == "banned":
                     if config.debug_logs:
                         print(f"[WAF BLOCKED] {ip}")
-                    return self._blocked_response("repeated_sensitive_path_probe")
-                return self._blocked_response("sensitive_path_probe")
+                    return self._blocked_response("repeated_sensitive_path_probe", config)
+                return self._blocked_response("sensitive_path_probe", config)
+
+            if ip_is_allowed:
+                return self.get_response(request)
 
             if not in_scope:
                 return self.get_response(request)
@@ -102,13 +109,13 @@ class InternalWAFMiddleware:
                 )
                 leave_request(ip)
                 entered_request = False
-                return self._rate_limited_response(retry_after=10)
+                return self._rate_limited_response(config, retry_after=10)
 
             limited, retry_after, score = rate_limit(ip, request, config)
             if not limited:
                 leave_request(ip)
                 entered_request = False
-                return self._rate_limited_response(retry_after=retry_after)
+                return self._rate_limited_response(config, retry_after=retry_after)
 
             sqli_pattern = detect_sqli(request, config)
             if sqli_pattern:
@@ -127,7 +134,7 @@ class InternalWAFMiddleware:
                     print(f"[WAF BLOCKED] {ip}")
                 leave_request(ip)
                 entered_request = False
-                return self._blocked_response("sql_injection_payload")
+                return self._blocked_response("sql_injection_payload", config)
 
             traversal_pattern = detect_path_traversal(request, config)
             if traversal_pattern:
@@ -144,7 +151,7 @@ class InternalWAFMiddleware:
                 )
                 leave_request(ip)
                 entered_request = False
-                return self._blocked_response("path_traversal_payload")
+                return self._blocked_response("path_traversal_payload", config)
 
             if is_suspicious_user_agent(user_agent, config):
                 if config.debug_logs:
@@ -164,7 +171,7 @@ class InternalWAFMiddleware:
                         print(f"[WAF BLOCKED] {ip}")
                     leave_request(ip)
                     entered_request = False
-                    return self._blocked_response("risk_score_threshold")
+                    return self._blocked_response("risk_score_threshold", config)
 
             view_started = True
             response = self.get_response(request)
@@ -176,7 +183,7 @@ class InternalWAFMiddleware:
                     if action == "banned":
                         if config.debug_logs:
                             print(f"[WAF BLOCKED] {ip}")
-                        return self._blocked_response("many_404_responses")
+                        return self._blocked_response("many_404_responses", config)
             except Exception:
                 logger.exception("internal_waf_response_observer_failed path=%s", getattr(request, "path", ""))
             return response
@@ -190,17 +197,19 @@ class InternalWAFMiddleware:
                 leave_request(ip)
 
     @staticmethod
-    def _blocked_response(reason, status=403):
+    def _blocked_response(reason, config=None, status=403):
+        version = getattr(config, "version", "waf-unknown")
         return JsonResponse(
-            {"detail": "Request blocked.", "code": "security_blocked"},
+            {"detail": "Request blocked.", "code": "security_blocked", "waf_version": version},
             status=status,
-            headers={"X-Security-Block": str(reason)},
+            headers={"X-Security-Block": str(reason), "X-WAF-Version": version},
         )
 
     @staticmethod
-    def _rate_limited_response(retry_after=60):
+    def _rate_limited_response(config=None, retry_after=60):
+        version = getattr(config, "version", "waf-unknown")
         return JsonResponse(
-            {"detail": "Too many requests.", "code": "rate_limited"},
+            {"detail": "Too many requests.", "code": "rate_limited", "waf_version": version},
             status=429,
-            headers={"Retry-After": str(retry_after), "X-Security-Block": "rate_limit"},
+            headers={"Retry-After": str(retry_after), "X-Security-Block": "rate_limit", "X-WAF-Version": version},
         )

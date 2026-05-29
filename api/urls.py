@@ -16,9 +16,11 @@ from .views.imagen360Casa import *
 from .views.plan_extraction import extract_lotes_from_overlay
 from .views.share import og_image_lote, og_image_proyecto
 from .views.error_reporting import frontend_error_report
+from .views.security_health import waf_health
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 urlpatterns = [
+    path('security/waf-health/', waf_health),
     #Inmobiliaria 
     path('listInmobiliaria/', list_inmobiliarias),
     # path('registerInmobiliaria/', register_inmobiliaria),

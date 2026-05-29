@@ -244,10 +244,9 @@ def observe_security_response(request, response):
         return None
 
     ip = get_client_ip(request)
-    if ip_is_whitelisted(ip, config.whitelist_ips):
-        return None
+    path_is_sensitive = is_sensitive_path(path, config)
 
-    if is_sensitive_path(path, config):
+    if path_is_sensitive:
         hits = _cache_incr(f"security:response_sensitive:{ip}", timeout=10 * 60)
         score, action = add_risk(
             ip,
@@ -307,6 +306,9 @@ def observe_security_response(request, response):
                 blocked=True,
             )
         return action
+
+    if ip_is_whitelisted(ip, config.whitelist_ips):
+        return None
 
     if status_code == 404:
         hits_or_score, action = record_missing_path(ip, request, config)

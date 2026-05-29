@@ -253,6 +253,7 @@ REGISTRATION_ALLOWED_INTERNAL_EMAILS = tuple(_get_csv("REGISTRATION_ALLOWED_INTE
 
 SECURITY_WAF = {
     "ENABLED": _get_bool("SECURITY_WAF_ENABLED", True),
+    "VERSION": _get_env("SECURITY_WAF_VERSION", "waf-2026-05-29-response-observer-v2"),
     "WHITELIST_IPS": _get_csv("SECURITY_WAF_WHITELIST_IPS", "127.0.0.1,::1"),
     "API_PREFIXES": _get_csv("SECURITY_WAF_API_PREFIXES", "/api/"),
     "RATE_LIMIT_PER_MINUTE": int(_get_env("SECURITY_WAF_RATE_LIMIT_PER_MINUTE", "180")),
@@ -274,7 +275,7 @@ SECURITY_WAF = {
     "WHITELIST_METHODS": _get_csv("SECURITY_WAF_WHITELIST_METHODS", "OPTIONS"),
     "WHITELIST_EXACT_PATHS": _get_csv(
         "SECURITY_WAF_WHITELIST_EXACT_PATHS",
-        "/,/api/health/,/api/healthcheck/,/api/healthcheck,/health/,/healthcheck/,/favicon.ico,/robots.txt",
+        "/,/api/health/,/api/healthcheck/,/api/healthcheck,/api/security/waf-health/,/health/,/healthcheck/,/favicon.ico,/robots.txt",
     ),
     "WHITELIST_PATH_PREFIXES": _get_csv("SECURITY_WAF_WHITELIST_PATH_PREFIXES", "/static/,/media/"),
 }

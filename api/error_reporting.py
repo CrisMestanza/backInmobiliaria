@@ -7,9 +7,11 @@ from html import escape
 
 import requests
 from django.conf import settings
+from django.http import JsonResponse
 from django.http.request import RawPostDataException
 
 from api.request_utils import get_client_ip
+from api.security.conf import get_security_config
 from api.security.services import observe_security_response
 
 logger = logging.getLogger("api.error_reporting")
@@ -342,13 +344,14 @@ def notify_backend_exception(request, exc):
 
 
 def notify_backend_response(request, response):
+    security_action = None
     try:
-        observe_security_response(request, response)
+        security_action = observe_security_response(request, response)
     except Exception:
         logger.exception("security_response_observer_failed path=%s", getattr(request, "path", ""))
 
     if not should_report_response(request, response) or already_reported(request):
-        return
+        return _security_replacement_response(request, security_action)
 
     status_code = int(getattr(response, "status_code", 0) or 0)
     request_context = _request_context(request)
@@ -373,6 +376,38 @@ def notify_backend_response(request, response):
     )
     if send_telegram_alert(message):
         mark_reported(request)
+    return _security_replacement_response(request, security_action)
+
+
+def _security_replacement_response(request, security_action):
+    observation = getattr(request, "_security_observation", None)
+    if not observation:
+        return None
+    event_type = observation.get("event_type")
+    if event_type in {"sensitive_response_path", "repeated_scanner_response", "ip_banned"}:
+        reason = observation.get("reason") or "sensitive_response_path"
+        version = get_security_config().version
+        return JsonResponse(
+            {"detail": "Request blocked.", "code": "security_blocked", "waf_version": version},
+            status=403,
+            headers={
+                "X-Security-Block": str(reason),
+                "X-Security-Layer": "response_observer",
+                "X-WAF-Version": version,
+            },
+        )
+    if security_action == "banned":
+        version = get_security_config().version
+        return JsonResponse(
+            {"detail": "Request blocked.", "code": "security_blocked", "waf_version": version},
+            status=403,
+            headers={
+                "X-Security-Block": "risk_score_threshold",
+                "X-Security-Layer": "response_observer",
+                "X-WAF-Version": version,
+            },
+        )
+    return None
 
 
 def notify_frontend_report(request, payload):

@@ -17,6 +17,7 @@ DEFAULT_WHITELIST_EXACT_PATHS = [
     "/api/health/",
     "/api/healthcheck/",
     "/api/healthcheck",
+    "/api/security/waf-health/",
     "/health/",
     "/healthcheck/",
     "/favicon.ico",
@@ -36,6 +37,25 @@ DEFAULT_SENSITIVE_PATHS = [
     "/api/docs",
     "/api/swagger",
     "/api/graphql/",
+    "/api/env",
+    "/api/actuator/env",
+    "/api/actuator/configprops",
+    "/api/actuator/heapdump",
+    "/api/heapdump",
+    "/api/aws.json",
+    "/api/credentials.json",
+    "/api/docker-compose.yml",
+    "/api/docker-compose.prod.yml",
+    "/api/config.json",
+    "/api/config.yml",
+    "/api/application.yml",
+    "/api/application.properties",
+    "/api/database.php",
+    "/api/settings.json",
+    "/api/settings.yml",
+    "/api/secrets.json",
+    "/api/keys.json",
+    "/api/sonicos/is-sslvpn-enabled",
     "/api/dump.sql",
     "/api/db.sqlite3",
     "/api/__pycache__/*",
@@ -90,6 +110,7 @@ DEFAULT_SENSITIVE_SUBSTRINGS = [
     ".git",
     "actuator",
     "heapdump",
+    "/env",
     "swagger",
     "swagger-ui",
     "graphql",
@@ -97,6 +118,11 @@ DEFAULT_SENSITIVE_SUBSTRINGS = [
     "phpinfo",
     "docker-compose",
     "credentials",
+    "application.yml",
+    "application.properties",
+    "database.php",
+    "secrets.json",
+    "keys.json",
     "config",
     "settings",
     "backup",
@@ -151,6 +177,7 @@ DEFAULT_ALLOWED_BOT_UA_PATTERNS = [
 @dataclass(frozen=True)
 class SecurityConfig:
     enabled: bool
+    version: str
     whitelist_ips: tuple[str, ...]
     whitelist_bot_patterns: tuple[re.Pattern, ...]
     suspicious_ua_patterns: tuple[re.Pattern, ...]
@@ -189,6 +216,7 @@ def get_security_config() -> SecurityConfig:
     raw = getattr(settings, "SECURITY_WAF", {})
     return SecurityConfig(
         enabled=bool(raw.get("ENABLED", True)),
+        version=str(raw.get("VERSION", "waf-2026-05-29-response-observer-v2")),
         whitelist_ips=tuple(raw.get("WHITELIST_IPS", ())),
         whitelist_bot_patterns=_compile_many(raw.get("WHITELIST_BOT_UA_PATTERNS", DEFAULT_ALLOWED_BOT_UA_PATTERNS)),
         suspicious_ua_patterns=_compile_many(raw.get("SUSPICIOUS_UA_PATTERNS", DEFAULT_SUSPICIOUS_UA_PATTERNS)),
