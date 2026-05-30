@@ -45,6 +45,8 @@ def active_block_for_ip(ip: str, config=None):
             )
         if block:
             ttl = 86400 if block.expires_at is None else max(60, int((block.expires_at - timezone.now()).total_seconds()))
+            positive_ttl = getattr(config, "block_positive_cache_seconds", 60)
+            ttl = min(ttl, positive_ttl) if positive_ttl and positive_ttl > 0 else ttl
             payload = {"reason": block.reason, "permanent": block.expires_at is None}
             cache.set(key, payload, timeout=ttl)
             return payload
@@ -98,6 +100,9 @@ def ban_ip(ip, request, reason, minutes, score, permanent=False, metadata=None):
             },
         )
         ttl = 86400 if permanent else max(60, int((expires_at - now).total_seconds()))
+        config = get_security_config()
+        positive_ttl = getattr(config, "block_positive_cache_seconds", 60)
+        ttl = min(ttl, positive_ttl) if positive_ttl and positive_ttl > 0 else ttl
         cache.set(f"security:block:{ip}", {"reason": block.reason, "permanent": permanent}, timeout=ttl)
         log_security_event(
             ip,

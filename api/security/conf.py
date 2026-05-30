@@ -200,6 +200,7 @@ class SecurityConfig:
     body_inspection_bytes: int
     log_sample_seconds: int
     block_negative_cache_seconds: int
+    block_positive_cache_seconds: int
     cleanup_interval_seconds: int
     event_retention_days: int
     max_security_events: int
@@ -239,6 +240,7 @@ def get_security_config() -> SecurityConfig:
         body_inspection_bytes=int(raw.get("BODY_INSPECTION_BYTES", 16384)),
         log_sample_seconds=int(raw.get("LOG_SAMPLE_SECONDS", 60)),
         block_negative_cache_seconds=int(raw.get("BLOCK_NEGATIVE_CACHE_SECONDS", 120)),
+        block_positive_cache_seconds=int(raw.get("BLOCK_POSITIVE_CACHE_SECONDS", 60)),
         cleanup_interval_seconds=int(raw.get("CLEANUP_INTERVAL_SECONDS", 24 * 3600)),
         event_retention_days=int(raw.get("EVENT_RETENTION_DAYS", 30)),
         max_security_events=int(raw.get("MAX_SECURITY_EVENTS", 50000)),
