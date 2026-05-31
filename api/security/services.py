@@ -249,6 +249,20 @@ def observe_security_response(request, response):
         return None
 
     ip = get_client_ip(request)
+    response_block_reason = response.headers.get("X-Security-Block") if hasattr(response, "headers") else None
+    if response_block_reason:
+        _attach_security_observation(
+            request,
+            event_type="waf_blocked_response",
+            reason=response_block_reason,
+            risk_delta=0,
+            score_total=cache.get(f"security:score:{ip}", 0),
+            action="blocked",
+            status_code=status_code,
+            blocked=True,
+        )
+        return "blocked"
+
     path_is_sensitive = is_sensitive_path(path, config)
 
     if path_is_sensitive:

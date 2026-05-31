@@ -1,10 +1,12 @@
 from django.http.request import RawPostDataException
 from unittest.mock import patch
 
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APIClient
 
+from api.models import BlockedIP, SecurityEvent
 from api.error_reporting import _request_body, sanitize_value
+from api.views.security_actions import make_manual_block_token
 
 
 class ErrorReportingSanitizeTests(SimpleTestCase):
@@ -82,3 +84,31 @@ class FrontendErrorReportViewTests(SimpleTestCase):
         self.assertIn("[redacted]", posted_message)
         self.assertIn("Intento de registrar proyecto", posted_message)
         self.assertNotIn("body_error", posted_message)
+        reply_markup = mock_post.call_args.kwargs["json"]["reply_markup"]
+        self.assertIn("inline_keyboard", reply_markup)
+        self.assertIn("Bloquear IP", reply_markup["inline_keyboard"][0][0]["text"])
+
+
+@override_settings(
+    TELEGRAM_SECURITY_ACTION_MAX_AGE_SECONDS=86400,
+    TELEGRAM_MANUAL_BLOCK_MINUTES=60,
+)
+class TelegramSecurityActionTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_manual_block_token_blocks_ip(self):
+        token = make_manual_block_token("203.0.113.44", path="/api/.env", method="GET")
+
+        response = self.client.get("/api/security/manual-block-ip/", {"token": token})
+
+        self.assertEqual(response.status_code, 200)
+        block = BlockedIP.objects.get(ip_address="203.0.113.44")
+        self.assertTrue(block.is_active)
+        self.assertEqual(block.reason, "manual_telegram_block")
+        self.assertTrue(SecurityEvent.objects.filter(ip_address="203.0.113.44", event_type="manual_telegram_block").exists())
+
+    def test_manual_block_rejects_invalid_token(self):
+        response = self.client.get("/api/security/manual-block-ip/", {"token": "bad-token"})
+
+        self.assertEqual(response.status_code, 400)

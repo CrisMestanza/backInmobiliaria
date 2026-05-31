@@ -63,6 +63,7 @@ INSTALLED_APPS = [
 # ============================================
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
+    'api.middleware.RequestAuditLogMiddleware',
     'api.security.middleware.InternalWAFMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'api.middleware.SecurityHeadersMiddleware',
@@ -73,7 +74,6 @@ MIDDLEWARE = [
     'axes.middleware.AxesMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'api.middleware.RequestAuditLogMiddleware',
 ]
 
 ROOT_URLCONF = 'principal.urls'
@@ -316,6 +316,9 @@ EMAIL_TIMEOUT = int(_get_env("EMAIL_TIMEOUT", "20"))
 TELEGRAM_ERROR_ALERTS_ENABLED = _get_bool("TELEGRAM_ERROR_ALERTS_ENABLED", False)
 TELEGRAM_BOT_TOKEN = _get_env("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = _get_env("TELEGRAM_CHAT_ID", "")
+TELEGRAM_SECURITY_ACTION_BASE_URL = _get_env("TELEGRAM_SECURITY_ACTION_BASE_URL", "")
+TELEGRAM_SECURITY_ACTION_MAX_AGE_SECONDS = int(_get_env("TELEGRAM_SECURITY_ACTION_MAX_AGE_SECONDS", "86400"))
+TELEGRAM_MANUAL_BLOCK_MINUTES = int(_get_env("TELEGRAM_MANUAL_BLOCK_MINUTES", "1440"))
 
 # ============================================
 # CLAVE PRIMARIA POR DEFECTO

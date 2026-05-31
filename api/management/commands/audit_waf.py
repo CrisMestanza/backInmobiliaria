@@ -26,6 +26,7 @@ DEFAULT_PROBES = [
     "/api/docker-compose.prod.yml",
     "/api/config.json",
     "/api/config.yml",
+    "/api/appsettings.json",
     "/api/application.yml",
     "/api/application.properties",
     "/api/database.php",
@@ -34,6 +35,10 @@ DEFAULT_PROBES = [
     "/api/secrets.json",
     "/api/keys.json",
     "/api/sonicos/is-sslvpn-enabled",
+    "/api/v1/application.yml",
+    "/api/v2/application.yml",
+    "/api/v1/config.json",
+    "/api/v2/config.json",
 ]
 
 

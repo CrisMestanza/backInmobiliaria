@@ -4,15 +4,18 @@ import traceback
 from datetime import datetime
 from email.utils import format_datetime
 from html import escape
+from urllib.parse import urlencode
 
 import requests
 from django.conf import settings
 from django.http import JsonResponse
 from django.http.request import RawPostDataException
+from django.urls import reverse
 
 from api.request_utils import get_client_ip
 from api.security.conf import get_security_config
 from api.security.services import observe_security_response
+from api.views.security_actions import make_manual_block_token
 
 logger = logging.getLogger("api.error_reporting")
 
@@ -199,6 +202,7 @@ def _security_context(request):
         "counted": "contabilizado",
         "score": "score aumentado",
         "banned": "IP bloqueada",
+        "blocked": "bloqueado",
     }.get(observation.get("action"), observation.get("action"))
     return sanitize_value(
         {
@@ -277,7 +281,43 @@ def _frontend_payload_context(frontend_payload):
     }
 
 
-def send_telegram_alert(message):
+def _security_action_url(request, request_context):
+    ip = request_context.get("ip")
+    if not ip:
+        return None
+    try:
+        token = make_manual_block_token(
+            ip,
+            path=request_context.get("full_path") or request_context.get("path") or "",
+            method=request_context.get("method") or "",
+        )
+    except Exception:
+        return None
+
+    relative_url = f"{reverse('security_manual_block_ip')}?{urlencode({'token': token})}"
+    base_url = str(getattr(settings, "TELEGRAM_SECURITY_ACTION_BASE_URL", "") or "").rstrip("/")
+    if base_url:
+        return f"{base_url}{relative_url}"
+    return request.build_absolute_uri(relative_url)
+
+
+def _telegram_security_buttons(request, request_context):
+    block_url = _security_action_url(request, request_context)
+    if not block_url:
+        return None
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": f"Bloquear IP {request_context.get('ip')}",
+                    "url": block_url,
+                }
+            ]
+        ]
+    }
+
+
+def send_telegram_alert(message, reply_markup=None):
     if not alerts_enabled():
         return False
 
@@ -293,6 +333,8 @@ def send_telegram_alert(message):
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
         requests.post(url, json=payload, timeout=10)
         return True
@@ -339,7 +381,7 @@ def notify_backend_exception(request, exc):
             ("Traceback", traceback.format_exc()),
         ],
     )
-    if send_telegram_alert(message):
+    if send_telegram_alert(message, reply_markup=_telegram_security_buttons(request, request_context)):
         mark_reported(request)
 
 
@@ -374,7 +416,7 @@ def notify_backend_response(request, response):
             ("Respuesta", _response_body(response)),
         ],
     )
-    if send_telegram_alert(message):
+    if send_telegram_alert(message, reply_markup=_telegram_security_buttons(request, request_context)):
         mark_reported(request)
     return _security_replacement_response(request, security_action)
 
@@ -435,4 +477,4 @@ def notify_frontend_report(request, payload):
             ("Reporte original", frontend_payload),
         ],
     )
-    send_telegram_alert(message)
+    send_telegram_alert(message, reply_markup=_telegram_security_buttons(request, _request_context(request)))
