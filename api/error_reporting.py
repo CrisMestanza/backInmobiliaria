@@ -284,6 +284,16 @@ def _frontend_payload_context(frontend_payload):
 def _security_action_url(request, request_context):
     ip = request_context.get("ip")
     if not ip:
+        request._telegram_block_button_skip_reason = {
+            "reason": "missing_ip",
+            "path": request_context.get("full_path") or request_context.get("path"),
+            "method": request_context.get("method"),
+        }
+        logger.warning(
+            "telegram_block_button_missing reason=missing_ip path=%s method=%s",
+            request_context.get("full_path") or request_context.get("path"),
+            request_context.get("method"),
+        )
         return None
     try:
         token = make_manual_block_token(
@@ -291,20 +301,90 @@ def _security_action_url(request, request_context):
             path=request_context.get("full_path") or request_context.get("path") or "",
             method=request_context.get("method") or "",
         )
-    except Exception:
+    except Exception as exc:
+        request._telegram_block_button_skip_reason = {
+            "reason": "token_error",
+            "error": exc.__class__.__name__,
+            "ip": ip,
+            "path": request_context.get("full_path") or request_context.get("path"),
+            "method": request_context.get("method"),
+        }
+        logger.warning(
+            "telegram_block_button_missing reason=token_error error=%s ip=%s path=%s method=%s",
+            exc.__class__.__name__,
+            ip,
+            request_context.get("full_path") or request_context.get("path"),
+            request_context.get("method"),
+            exc_info=True,
+        )
         return None
 
-    relative_url = f"{reverse('security_manual_block_ip')}?{urlencode({'token': token})}"
+    try:
+        relative_url = f"{reverse('security_manual_block_ip')}?{urlencode({'token': token})}"
+    except Exception as exc:
+        request._telegram_block_button_skip_reason = {
+            "reason": "reverse_error",
+            "error": exc.__class__.__name__,
+            "ip": ip,
+            "path": request_context.get("full_path") or request_context.get("path"),
+            "method": request_context.get("method"),
+        }
+        logger.warning(
+            "telegram_block_button_missing reason=reverse_error error=%s ip=%s path=%s method=%s",
+            exc.__class__.__name__,
+            ip,
+            request_context.get("full_path") or request_context.get("path"),
+            request_context.get("method"),
+            exc_info=True,
+        )
+        return None
+
     base_url = str(getattr(settings, "TELEGRAM_SECURITY_ACTION_BASE_URL", "") or "").rstrip("/")
     if base_url:
         return f"{base_url}{relative_url}"
-    return request.build_absolute_uri(relative_url)
+
+    try:
+        return request.build_absolute_uri(relative_url)
+    except Exception as exc:
+        request._telegram_block_button_skip_reason = {
+            "reason": "absolute_uri_error",
+            "error": exc.__class__.__name__,
+            "ip": ip,
+            "path": request_context.get("full_path") or request_context.get("path"),
+            "method": request_context.get("method"),
+            "host": request.META.get("HTTP_HOST"),
+        }
+        logger.warning(
+            "telegram_block_button_missing reason=absolute_uri_error error=%s ip=%s path=%s method=%s host=%s",
+            exc.__class__.__name__,
+            ip,
+            request_context.get("full_path") or request_context.get("path"),
+            request_context.get("method"),
+            request.META.get("HTTP_HOST"),
+            exc_info=True,
+        )
+        return None
 
 
 def _telegram_security_buttons(request, request_context):
     block_url = _security_action_url(request, request_context)
     if not block_url:
+        if not getattr(request, "_telegram_block_button_skip_reason", None):
+            request._telegram_block_button_skip_reason = {
+                "reason": "empty_block_url",
+                "ip": request_context.get("ip"),
+                "path": request_context.get("full_path") or request_context.get("path"),
+                "method": request_context.get("method"),
+            }
+        logger.warning(
+            "telegram_reply_markup_omitted ip=%s path=%s method=%s base_url_configured=%s",
+            request_context.get("ip"),
+            request_context.get("full_path") or request_context.get("path"),
+            request_context.get("method"),
+            bool(str(getattr(settings, "TELEGRAM_SECURITY_ACTION_BASE_URL", "") or "").strip()),
+        )
         return None
+    request._telegram_block_button_skip_reason = None
     return {
         "inline_keyboard": [
             [
@@ -362,6 +442,33 @@ def already_reported(request):
     return bool(getattr(request, "_error_alert_reported", False))
 
 
+def _waf_diagnostic_context(request, response, security_action):
+    if getattr(request, "_security_observation", None):
+        return None
+    return sanitize_value(
+        {
+            "observer_called": bool(getattr(request, "_security_response_observed", False)),
+            "observer_skip": getattr(request, "_security_observer_skip_reason", None),
+            "security_action": security_action,
+            "response_block_header": response.headers.get("X-Security-Block") if hasattr(response, "headers") else None,
+        }
+    )
+
+
+def _telegram_button_diagnostic_context(request):
+    reason = getattr(request, "_telegram_block_button_skip_reason", None)
+    if not reason:
+        return None
+    return sanitize_value(
+        {
+            **reason,
+            "base_url_configured": bool(
+                str(getattr(settings, "TELEGRAM_SECURITY_ACTION_BASE_URL", "") or "").strip()
+            ),
+        }
+    )
+
+
 def notify_backend_exception(request, exc):
     if not alerts_enabled() or getattr(request, "_skip_error_reporting", False):
         return
@@ -397,10 +504,24 @@ def notify_backend_response(request, response):
 
     status_code = int(getattr(response, "status_code", 0) or 0)
     request_context = _request_context(request)
+    if not getattr(request, "_security_observation", None):
+        logger.warning(
+            "telegram_api_alert_without_waf_context path=%s method=%s status=%s ip=%s "
+            "security_action=%s observer_called=%s observer_skip=%s response_block_header=%s",
+            request_context.get("full_path"),
+            request_context.get("method"),
+            status_code,
+            request_context.get("ip"),
+            security_action,
+            bool(getattr(request, "_security_response_observed", False)),
+            getattr(request, "_security_observer_skip_reason", None),
+            response.headers.get("X-Security-Block") if hasattr(response, "headers") else None,
+        )
     title = f"{_severity_emoji(status_code)} GeoHabita · Respuesta API"
     if status_code >= 500:
         title = f"{_severity_emoji(status_code)} GeoHabita · Error Backend"
 
+    reply_markup = _telegram_security_buttons(request, request_context)
     message = _format_message(
         title,
         [
@@ -413,10 +534,12 @@ def notify_backend_response(request, response):
             ("Payload", request_context.get("body")),
             ("Query", request_context.get("query_params")),
             ("Seguridad WAF", _security_context(request)),
+            ("Diagnostico WAF", _waf_diagnostic_context(request, response, security_action)),
+            ("Diagnostico boton bloqueo", _telegram_button_diagnostic_context(request)),
             ("Respuesta", _response_body(response)),
         ],
     )
-    if send_telegram_alert(message, reply_markup=_telegram_security_buttons(request, request_context)):
+    if send_telegram_alert(message, reply_markup=reply_markup):
         mark_reported(request)
     return _security_replacement_response(request, security_action)
 

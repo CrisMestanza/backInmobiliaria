@@ -228,6 +228,13 @@ def _attach_security_observation(
     }
 
 
+def _attach_security_skip(request, reason, **metadata):
+    request._security_observer_skip_reason = {
+        "reason": reason,
+        **metadata,
+    }
+
+
 def observe_security_response(request, response):
     """
     Segunda capa: alimenta el score del WAF desde respuestas 404/403/500.
@@ -238,14 +245,17 @@ def observe_security_response(request, response):
     """
     config = get_security_config()
     if not config.enabled:
+        _attach_security_skip(request, "waf_disabled")
         return None
     request._security_response_observed = True
 
     path = request.path or ""
     status_code = int(getattr(response, "status_code", 0) or 0)
     if status_code not in {403, 404, 500} and status_code < 500:
+        _attach_security_skip(request, "status_not_observed", status_code=status_code)
         return None
     if request_path_is_whitelisted(request.method, path, config):
+        _attach_security_skip(request, "path_whitelisted", status_code=status_code)
         return None
 
     ip = get_client_ip(request)
@@ -327,6 +337,7 @@ def observe_security_response(request, response):
         return action
 
     if ip_is_whitelisted(ip, config.whitelist_ips):
+        _attach_security_skip(request, "ip_whitelisted", status_code=status_code, ip=ip)
         return None
 
     if status_code == 404:
