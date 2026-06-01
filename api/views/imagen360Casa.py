@@ -4,9 +4,14 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.db import transaction
+from django.http import HttpResponseRedirect
+import io
 import json
 import logging
+import os
 import traceback
 from rest_framework.exceptions import ValidationError
 from api.models import *
@@ -333,7 +338,53 @@ def guardar_imagenes_360_multiple(request):
         return _generic_error(exc=e)
 
 
-@api_view(['GET']) # Permitimos GET para que sea fácil de probar
+def _generate_thumb_360(original_name, thumb_name):
+    """Genera y guarda el thumbnail en un hilo aparte para no bloquear el request."""
+    try:
+        from PIL import Image
+        with default_storage.open(original_name, 'rb') as f:
+            img = Image.open(f)
+            img.load()
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        img.thumbnail((2048, 1024), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=75, optimize=True)
+        buf.seek(0)
+        default_storage.save(thumb_name, ContentFile(buf.read()))
+    except Exception as exc:
+        logger.error("Error generando thumbnail 360 %s: %s", thumb_name, exc)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@throttle_classes([PublicMapRateThrottle])
+def get_thumbnail_imagen360(request, id_imagen):
+    """Sirve un thumbnail comprimido (2048x1024, JPEG 75%) de la imagen 360.
+    Primera petición: genera en background y redirige a la imagen original.
+    Siguientes peticiones: redirige directo al thumbnail (instantáneo)."""
+    try:
+        obj = Imagen360.objects.get(id_imagen=id_imagen)
+    except Imagen360.DoesNotExist:
+        return Response({"error": "Imagen no encontrada."}, status=404)
+
+    if not obj.imagen:
+        return Response({"error": "Imagen sin archivo."}, status=404)
+
+    original_name = obj.imagen.name
+    root, _ext = os.path.splitext(original_name)
+    thumb_name = f"{root}_thumb.jpg"
+
+    if default_storage.exists(thumb_name):
+        return HttpResponseRedirect(default_storage.url(thumb_name))
+
+    import threading
+    t = threading.Thread(target=_generate_thumb_360, args=(original_name, thumb_name), daemon=True)
+    t.start()
+    return HttpResponseRedirect(obj.imagen.url)
+
+
+@api_view(['GET'])
 @permission_classes([AllowAny])
 @throttle_classes([PublicMapRateThrottle])
 def get_imagenes_360_multiple(request, idproyecto):

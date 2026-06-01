@@ -136,9 +136,8 @@ urlpatterns = [
     path('conectar_puntos_360/', conectar_puntos_360),
     path('get_hotspots_por_imagen/<int:id_imagen>/', get_hotspots_por_imagen),
     path('eliminar_hotspot/<int:id>/', eliminar_hotspot),
-    path('get_imagen_360_casa/<int:idproyecto>/', get_imagenes_360_multiple)
-    
-
+    path('get_imagen_360_casa/<int:idproyecto>/', get_imagenes_360_multiple),
+    path('imagen360/thumb/<int:id_imagen>/', get_thumbnail_imagen360),
     ]
 
 

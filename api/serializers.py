@@ -827,12 +827,15 @@ class LoteMapaDetalleSerializer(serializers.ModelSerializer):
         )
 
 class Imagen360Serializer(serializers.ModelSerializer):
+    imagen_thumb = serializers.SerializerMethodField()
+
     class Meta:
         model = Imagen360
         fields = (
             "id_imagen",
             "nombre",
             "imagen",
+            "imagen_thumb",
             "idproyecto",
             "idlote",
             "yaw",
@@ -840,3 +843,8 @@ class Imagen360Serializer(serializers.ModelSerializer):
             "overlays_2d",
             "texto_ayuda",
         )
+
+    def get_imagen_thumb(self, obj):
+        if not obj.imagen:
+            return None
+        return f"/api/imagen360/thumb/{obj.id_imagen}/"
