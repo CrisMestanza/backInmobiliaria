@@ -130,6 +130,7 @@ urlpatterns = [
     path('proyectosFiltrados/', proyectos_filtrados),
     
     # imagen 360 casas
+    path('360media/<path:path>', serve_360_media),
     path('guardar_imagen_360_casa/', guardar_imagenes_360_multiple),
     path('guardar_tour_360_completo/', guardar_tour_360_completo),
     path('agregar_punto_recorrido/', agregar_punto_recorrido),

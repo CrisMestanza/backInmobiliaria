@@ -7,12 +7,14 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db import transaction
-from django.http import HttpResponseRedirect
+from django.http import FileResponse, Http404, HttpResponseRedirect
 import io
 import json
 import logging
+import mimetypes
 import os
 import traceback
+from pathlib import Path
 from rest_framework.exceptions import ValidationError
 from api.models import *
 from api.serializers import *
@@ -228,10 +230,11 @@ def guardar_tour_360_completo(request):
                 overlays_2d_resolved['anchoredOverlays'] = resolved_anchored_overlays
                 overlays_2d_json = json.dumps(overlays_2d_resolved, separators=(',', ':'))
 
-                for image_id in overlay_image_ids:
-                    Imagen360.objects.filter(id_imagen=image_id, idproyecto=proyecto_instancia).update(
-                        overlays_2d=overlays_2d_json
-                    )
+                # Save the full bundle to ALL images of the project so every
+                # 360° view can render lot textures, drawings and annotations.
+                Imagen360.objects.filter(idproyecto=proyecto_instancia).update(
+                    overlays_2d=overlays_2d_json
+                )
 
             for conexion in conexiones:
                 origen_id = resolver_id_imagen(conexion.get('origenId'))
@@ -379,7 +382,7 @@ def get_thumbnail_imagen360(request, id_imagen):
         return HttpResponseRedirect(default_storage.url(thumb_name))
 
     import threading
-    t = threading.Thread(target=_generate_thumb_360, args=(original_name, thumb_name), daemon=True)
+    t = threading.Thread(target=_generate_thumb_360, args=(original_name, thumb_name), daemon=False)
     t.start()
     return HttpResponseRedirect(obj.imagen.url)
 
@@ -548,3 +551,26 @@ def eliminar_hotspot(request, id):
         return permission_error
     hotspot.delete()
     return Response({"ok": True})
+
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@throttle_classes([PublicMapRateThrottle])
+def serve_360_media(request, path):
+    """Proxy para archivos de media 360 — añade headers CORS vía CorsMiddleware."""
+    safe_root = Path(settings.MEDIA_ROOT).resolve()
+    try:
+        target = (safe_root / path).resolve()
+        target.relative_to(safe_root)
+    except (ValueError, OSError):
+        raise Http404
+    if not target.is_file():
+        raise Http404
+    content_type, _ = mimetypes.guess_type(str(target))
+    response = FileResponse(
+        open(target, "rb"),
+        content_type=content_type or "application/octet-stream",
+    )
+    response["Cache-Control"] = "public, max-age=86400"
+    return response

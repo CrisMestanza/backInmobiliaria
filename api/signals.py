@@ -5,6 +5,7 @@ import threading
 
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
@@ -40,5 +41,11 @@ def auto_generate_thumbnail(sender, instance, **kwargs):
     thumb_name = f"{root}_thumb.jpg"
     if default_storage.exists(thumb_name):
         return
-    t = threading.Thread(target=_generate_thumb_360, args=(original_name, thumb_name), daemon=True)
-    t.start()
+
+    def _start_thumb_thread():
+        if default_storage.exists(thumb_name):
+            return
+        t = threading.Thread(target=_generate_thumb_360, args=(original_name, thumb_name), daemon=False)
+        t.start()
+
+    transaction.on_commit(_start_thumb_thread)
